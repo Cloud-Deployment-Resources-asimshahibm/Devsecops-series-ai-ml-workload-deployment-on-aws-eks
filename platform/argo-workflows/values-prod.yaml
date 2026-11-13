@@ -1,0 +1,18 @@
+controller:
+  replicas: 2   # leader election
+
+server:
+  replicas: 2
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-prod-argo-workflows
+  # authModes: ["sso"]   # enable with your IdP before exposing the UI
+
+artifactRepository:
+  s3:
+    bucket: aiml-prod-wf-artifacts-__AWS_ACCOUNT_ID__
+
+workflow:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-prod-argo-workflows

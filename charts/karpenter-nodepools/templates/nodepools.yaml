@@ -1,0 +1,119 @@
+{{- $cluster := required "clusterName is required" .Values.clusterName -}}
+{{- range $name, $cfg := dict "cpu" .Values.cpu "gpu" .Values.gpu }}
+---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: {{ $name }}
+spec:
+  role: {{ required "nodeRole is required" $.Values.nodeRole }}
+  amiSelectorTerms:
+    # For GPU instance types Karpenter automatically selects the AL2023 NVIDIA variant
+    - alias: {{ $.Values.amiAlias }}
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ $cluster }}
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ $cluster }}
+  metadataOptions:
+    httpEndpoint: enabled
+    httpTokens: required
+    httpPutResponseHopLimit: 1
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: {{ $cfg.rootVolumeSize }}
+        volumeType: gp3
+        encrypted: true
+        {{- with $.Values.kmsKeyAlias }}
+        kmsKeyID: {{ . }}
+        {{- end }}
+        deleteOnTermination: true
+  tags:
+    karpenter.sh/discovery: {{ $cluster }}
+    nodepool: {{ $name }}           # cost allocation: GPU vs CPU spend in Cost Explorer
+    {{- range $k, $v := $.Values.costTags }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+{{- end }}
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: cpu
+spec:
+  weight: 10
+  template:
+    metadata:
+      labels:
+        workload: ml-cpu
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: cpu
+      expireAfter: {{ .Values.expireAfter }}
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: {{ toJson .Values.cpu.capacityTypes }}
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: {{ toJson .Values.cpu.instanceCategories }}
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: [{{ .Values.cpu.minGeneration | quote }}]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.k8s.aws/instance-size
+          operator: NotIn
+          values: ["nano", "micro", "small", "medium", "metal"]
+  limits:
+    {{- toYaml .Values.cpu.limits | nindent 4 }}
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: {{ .Values.cpu.consolidateAfter }}
+    budgets:
+      - nodes: {{ .Values.disruptionBudget | quote }}
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu
+spec:
+  weight: 20
+  template:
+    metadata:
+      labels:
+        workload: ml-gpu
+        nvidia.com/gpu.present: "true"
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: gpu
+      expireAfter: {{ .Values.expireAfter }}
+      taints:
+        - key: nvidia.com/gpu
+          value: "true"
+          effect: NoSchedule
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: {{ toJson .Values.gpu.capacityTypes }}
+        - key: karpenter.k8s.aws/instance-family
+          operator: In
+          values: {{ toJson .Values.gpu.instanceFamilies }}
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+  limits:
+    {{- toYaml .Values.gpu.limits | nindent 4 }}
+  disruption:
+    # GPU jobs are long-running and expensive to interrupt: only reclaim empty nodes
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: {{ .Values.gpu.consolidateAfter }}
+    budgets:
+      - nodes: {{ .Values.disruptionBudget | quote }}

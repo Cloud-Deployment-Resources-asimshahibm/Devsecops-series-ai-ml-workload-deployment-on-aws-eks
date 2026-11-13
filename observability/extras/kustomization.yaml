@@ -1,0 +1,53 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+
+resources:
+  - servicemonitors.yaml
+  - platform-alerts.yaml
+
+# Grafana sidecar picks up any ConfigMap labelled grafana_dashboard=1
+configMapGenerator:
+  - name: dashboard-ml-inference
+    files:
+      - dashboards/ml-inference.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        grafana_folder: ML Platform
+  - name: dashboard-ml-platform
+    files:
+      - dashboards/ml-platform-compute.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        grafana_folder: ML Platform
+  - name: dashboard-ml-cost-billing
+    files:
+      - dashboards/ml-cost-billing.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        grafana_folder: FinOps
+  - name: dashboard-ml-performance
+    files:
+      - dashboards/ml-performance.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        grafana_folder: ML Platform
+  - name: dashboard-slo-error-budget
+    files:
+      - dashboards/slo-error-budget.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        grafana_folder: SRE
+
+generatorOptions:
+  disableNameSuffixHash: true

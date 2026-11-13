@@ -1,0 +1,12 @@
+env: prod
+cluster: aiml-prod
+
+slo:
+  periodDays: 30          # prod Prometheus retention is 30d
+
+cost:
+  monthlyBudgetUSD: 6000
+  unallocatedGpuHourlyUSD: 2
+  namespaceHourlyUSD:
+    ray: 10
+    jupyterhub: 5

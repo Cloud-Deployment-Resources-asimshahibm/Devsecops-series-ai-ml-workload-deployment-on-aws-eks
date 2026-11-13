@@ -1,0 +1,32 @@
+env: dev
+region: us-east-1
+accountId: "__AWS_ACCOUNT_ID__"
+
+# Secrets Manager prefix written by Terraform: <project>-<env>/...
+secretPrefix: aiml-dev
+
+# Stable DNS alias for RDS created by Terraform (ExternalName service)
+postgres:
+  host: platform-postgres.platform-system.svc.cluster.local
+  port: 5432
+  apps:
+    - jupyterhub
+    - argo_workflows
+
+externalSecrets:
+  refreshInterval: 1h
+
+jupyterhub:
+  namespace: jupyterhub
+  sharedVolumeSize: 200Gi
+  # GitHub OAuth app (created manually, runbook Phase 5): stored in
+  # Secrets Manager as <secretPrefix>/jupyterhub/github-oauth {client_id, client_secret}
+  githubOauthSecret: true
+
+monitoring:
+  namespace: monitoring
+  # <secretPrefix>/grafana/admin {admin-user, admin-password}
+  grafanaAdminSecret: true
+
+argo:
+  namespace: argo

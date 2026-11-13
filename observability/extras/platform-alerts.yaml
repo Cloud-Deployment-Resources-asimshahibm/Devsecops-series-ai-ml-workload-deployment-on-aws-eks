@@ -1,0 +1,84 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ml-platform
+spec:
+  groups:
+    - name: gpu
+      rules:
+        - alert: GPUHighMemoryUtilisation
+          expr: (DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE)) > 0.95
+          for: 10m
+          labels: { severity: warning, team: ml-platform }
+          annotations:
+            summary: "GPU {{ $labels.gpu }} on {{ $labels.Hostname }} > 95% memory for 10m (OOM risk)"
+        - alert: GPUIdleButAllocated
+          expr: avg_over_time(DCGM_FI_DEV_GPU_UTIL{pod!=""}[2h]) < 5
+          for: 30m
+          labels: { severity: info, team: ml-platform }
+          annotations:
+            summary: "GPU allocated to {{ $labels.namespace }}/{{ $labels.pod }} has been <5% utilised for 2h (idle spend)"
+        - alert: GPUXidErrors
+          expr: increase(DCGM_FI_DEV_XID_ERRORS[10m]) > 0
+          labels: { severity: critical, team: ml-platform }
+          annotations:
+            summary: "NVIDIA XID error on {{ $labels.Hostname }} — node may need replacement"
+
+    - name: karpenter
+      rules:
+        - alert: KarpenterNodeClaimLaunchFailures
+          expr: increase(karpenter_nodeclaims_terminated_total{reason="launch_failed"}[15m]) > 0 or increase(karpenter_cloudprovider_errors_total[15m]) > 5
+          for: 5m
+          labels: { severity: warning, team: ml-platform }
+          annotations:
+            summary: "Karpenter cannot launch capacity (quota / ICE / spot). Check `kubectl -n kube-system logs deploy/karpenter`."
+        - alert: KarpenterNodePoolNearLimit
+          expr: karpenter_nodepools_usage{resource_type="cpu"} / karpenter_nodepools_limit{resource_type="cpu"} > 0.9
+          for: 15m
+          labels: { severity: warning, team: ml-platform }
+          annotations:
+            summary: "NodePool {{ $labels.nodepool }} above 90% of its CPU limit"
+        - alert: PodsPendingTooLong
+          expr: sum by (namespace) (kube_pod_status_phase{phase="Pending", namespace=~"ml-.*|ray|jupyterhub"}) > 0
+          for: 15m
+          labels: { severity: warning, team: ml-platform }
+          annotations:
+            summary: "Pods pending >15m in {{ $labels.namespace }} — capacity or scheduling constraint issue"
+
+    - name: pipelines
+      rules:
+        - alert: MLTrainingPipelineFailed
+          expr: increase(argo_workflows_ml_pipeline_runs_total{status="Failed"}[1h]) > 0
+          labels: { severity: warning, team: ml-science }
+          annotations:
+            summary: "ml-training-pipeline failed in the last hour — see Argo Workflows UI"
+        - alert: ArgoWorkflowsControllerDown
+          expr: absent(up{job=~".*argo-workflows.*controller.*"} == 1)
+          for: 10m
+          labels: { severity: critical, team: ml-platform }
+          annotations:
+            summary: "Argo Workflows controller is not being scraped / down"
+
+    - name: gitops
+      rules:
+        - alert: ArgoCDAppOutOfSync
+          expr: argocd_app_info{sync_status="OutOfSync"} == 1
+          for: 30m
+          labels: { severity: warning, team: ml-platform }
+          annotations:
+            summary: "Argo CD app {{ $labels.name }} OutOfSync for 30m"
+        - alert: ArgoCDAppDegraded
+          expr: argocd_app_info{health_status="Degraded"} == 1
+          for: 10m
+          labels: { severity: critical, team: ml-platform }
+          annotations:
+            summary: "Argo CD app {{ $labels.name }} is Degraded"
+
+    - name: secrets
+      rules:
+        - alert: ExternalSecretSyncFailing
+          expr: sum by (name, namespace) (externalsecret_status_condition{condition="Ready", status="False"}) > 0
+          for: 15m
+          labels: { severity: critical, team: ml-platform }
+          annotations:
+            summary: "ExternalSecret {{ $labels.namespace }}/{{ $labels.name }} not syncing from Secrets Manager"

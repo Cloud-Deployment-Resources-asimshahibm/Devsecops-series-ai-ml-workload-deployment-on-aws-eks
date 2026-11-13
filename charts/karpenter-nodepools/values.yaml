@@ -1,0 +1,34 @@
+clusterName: ""            # aiml-<env>  (also the karpenter.sh/discovery tag value)
+nodeRole: ""               # aiml-<env>-karpenter-node
+kmsKeyAlias: ""            # alias/aiml-<env>-platform  (EBS encryption)
+
+# Cost allocation tags on every EC2 instance + root volume Karpenter launches
+# (AWS Budgets / Cost Explorer filter on these — keep in sync with Terraform default_tags)
+costTags:
+  Project: aiml
+  Environment: dev
+
+# Pin an AMI version in prod (e.g. al2023@v20250116) so nodes only change via PR.
+amiAlias: al2023@latest
+
+cpu:
+  capacityTypes: ["spot", "on-demand"]
+  instanceCategories: ["c", "m", "r"]
+  minGeneration: 5
+  limits:
+    cpu: "200"
+    memory: 800Gi
+  consolidateAfter: 1m
+  rootVolumeSize: 100Gi
+
+gpu:
+  capacityTypes: ["on-demand"]
+  instanceFamilies: ["g5", "g6"]
+  limits:
+    nvidia.com/gpu: "8"
+  consolidateAfter: 5m
+  rootVolumeSize: 200Gi    # CUDA images are large
+
+# Disruption budget: never voluntarily replace more than 10% of nodes at once
+disruptionBudget: "10%"
+expireAfter: 720h          # recycle nodes every 30 days (patching)

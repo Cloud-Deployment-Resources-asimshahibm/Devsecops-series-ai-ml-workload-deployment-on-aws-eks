@@ -1,0 +1,13 @@
+{{- range list "monitoring" "argo" "jupyterhub" "ray" "ml-training" "ml-serving" "logging" }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ . }}
+  labels:
+    app.kubernetes.io/part-of: ml-platform
+    pod-security.kubernetes.io/warn: baseline
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+    argocd.argoproj.io/sync-options: Delete=false
+{{- end }}

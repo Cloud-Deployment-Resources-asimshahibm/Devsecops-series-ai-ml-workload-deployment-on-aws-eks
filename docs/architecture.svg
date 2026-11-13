@@ -1,0 +1,224 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1060" width="1600" height="1060" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/>
+    </marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ea580c"/>
+    </marker>
+    <style>
+      .t  { font-size: 15px; font-weight: 700; fill: #0f172a; }
+      .h  { font-size: 13px; font-weight: 700; fill: #0f172a; }
+      .s  { font-size: 11.5px; fill: #334155; }
+      .xs { font-size: 10.5px; fill: #475569; }
+      .lbl{ font-size: 11px; fill: #334155; font-weight: 600; }
+      .box{ fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; rx: 8; }
+      .ln { stroke: #475569; stroke-width: 1.6; fill: none; marker-end: url(#a); }
+      .gl { stroke: #16a34a; stroke-width: 2; fill: none; marker-end: url(#ag); stroke-dasharray: 6 4; }
+      .ol { stroke: #ea580c; stroke-width: 1.6; fill: none; marker-end: url(#ao); stroke-dasharray: 4 3; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1060" fill="#f8fafc"/>
+  <text x="30" y="40" font-size="23" font-weight="800" fill="#0f172a">DevOps-Series (AI/ML Workload Deployment on Kubernetes — AWS-EKS and Azure-AKS Platforms)</text>
+  <text x="30" y="64" class="s">Terraform (IaC) · GitHub Actions (CI) · Argo CD + Helm (GitOps CD) · Karpenter (CPU/GPU) · JupyterHub · Argo Workflows · KubeRay · Prometheus/Grafana/Loki · ELK</text>
+
+  <!-- ============ LEFT: developer / GitHub ============ -->
+  <rect x="30" y="90" width="300" height="560" rx="12" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4"/>
+  <text x="46" y="114" class="t">Source &amp; CI (GitHub)</text>
+
+  <rect class="box" x="50" y="130" width="260" height="58"/>
+  <text x="64" y="153" class="h">👩‍💻 ML engineer / Data scientist</text>
+  <text x="64" y="172" class="s">git push · PR · JupyterHub notebooks</text>
+
+  <rect class="box" x="50" y="206" width="260" height="96"/>
+  <text x="64" y="228" class="h">GitHub repository (monorepo)</text>
+  <text x="64" y="247" class="s">terraform/ · charts/ · argocd/</text>
+  <text x="64" y="264" class="s">platform/ · observability/ · ml/</text>
+  <text x="64" y="283" class="xs">Single source of truth for infra + apps</text>
+
+  <rect class="box" x="50" y="320" width="260" height="190" style="stroke:#2563eb"/>
+  <text x="64" y="342" class="h">GitHub Actions</text>
+  <text x="64" y="363" class="s">ci.yml — ruff · pytest · tf validate ·</text>
+  <text x="64" y="379" class="s">  tflint · helm lint · kubeconform · checkov</text>
+  <text x="64" y="399" class="s">terraform.yml — plan on PR, apply dev,</text>
+  <text x="64" y="415" class="s">  prod behind Environment approval</text>
+  <text x="64" y="435" class="s">build-and-deploy.yml — build → Trivy →</text>
+  <text x="64" y="451" class="s">  ECR (SBOM) → bump values-dev.yaml</text>
+  <text x="64" y="471" class="s">promote-prod.yml — PR copying tags → prod</text>
+  <text x="64" y="491" class="s">run-training-pipeline.yml — argo submit</text>
+
+  <rect class="box" x="50" y="528" width="260" height="104"/>
+  <text x="64" y="550" class="h">🔐 OIDC → IAM roles (no keys)</text>
+  <text x="64" y="570" class="s">aiml-gha-tf-plan   (ReadOnly)</text>
+  <text x="64" y="587" class="s">aiml-gha-tf-apply  (env-gated)</text>
+  <text x="64" y="604" class="s">aiml-gha-ci        (ECR push,</text>
+  <text x="64" y="620" class="s">                    submit Workflows only)</text>
+
+  <path class="ln" d="M180 188 V206"/>
+  <path class="ln" d="M180 302 V320"/>
+  <path class="ln" d="M180 510 V528"/>
+
+  <!-- ============ AWS account ============ -->
+  <rect x="360" y="90" width="1210" height="940" rx="14" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="378" y="116" class="t" fill="#9a3412">AWS account · us-east-1</text>
+
+  <!-- Shared / regional services row -->
+  <rect class="box" x="380" y="130" width="170" height="78"/>
+  <text x="394" y="152" class="h">Amazon ECR</text>
+  <text x="394" y="171" class="s">aiml/ml-inference</text>
+  <text x="394" y="186" class="s">aiml/ml-training · ml-ray</text>
+  <text x="394" y="201" class="xs">immutable tags · scan on push</text>
+
+  <rect class="box" x="565" y="130" width="200" height="78"/>
+  <text x="579" y="152" class="h">Amazon S3 (SSE-KMS)</text>
+  <text x="579" y="171" class="s">ml-data: datasets/ models/ tuning/</text>
+  <text x="579" y="186" class="s">wf-artifacts · loki · tfstate</text>
+  <text x="579" y="201" class="xs">registry: models/&lt;name&gt;/latest.json</text>
+
+  <rect class="box" x="780" y="130" width="160" height="78"/>
+  <text x="794" y="152" class="h">AWS KMS (CMK)</text>
+  <text x="794" y="171" class="s">EKS secrets · EBS · EFS</text>
+  <text x="794" y="186" class="s">S3 · RDS · Secrets Mgr</text>
+  <text x="794" y="201" class="xs">auto-rotation on</text>
+
+  <rect class="box" x="955" y="130" width="180" height="78"/>
+  <text x="969" y="152" class="h">Secrets Manager</text>
+  <text x="969" y="171" class="s">aiml-&lt;env&gt;/rds/* · grafana/*</text>
+  <text x="969" y="186" class="s">jupyterhub/github-oauth</text>
+  <text x="969" y="201" class="xs">→ External Secrets Operator</text>
+
+  <rect class="box" x="1150" y="130" width="200" height="78"/>
+  <text x="1164" y="152" class="h">IAM · IRSA · Pod Identity</text>
+  <text x="1164" y="171" class="s">1 role per workload SA</text>
+  <text x="1164" y="186" class="s">training · inference · jupyter</text>
+  <text x="1164" y="201" class="xs">argo · loki · ext-secrets · karpenter</text>
+
+  <rect class="box" x="1365" y="130" width="185" height="78"/>
+  <text x="1379" y="152" class="h">Billing guardrails</text>
+  <text x="1379" y="171" class="s">AWS Budgets · Cost Anomaly</text>
+  <text x="1379" y="186" class="s">Detection · cost alloc. tags</text>
+  <text x="1379" y="201" class="xs">+ SQS Spot interruption queue</text>
+
+  <!-- VPC -->
+  <rect x="380" y="228" width="1170" height="782" rx="12" fill="#ecfeff" stroke="#0891b2" stroke-width="1.5"/>
+  <text x="396" y="252" class="t" fill="#155e75">VPC 10.x.0.0/16 · 3 AZs · flow logs</text>
+  <text x="700" y="251" class="xs">public: ALB + NAT · private /20: nodes &amp; pods (prefix delegation) · intra: EKS ENIs · database: RDS · VPC endpoints: S3 (gw), ECR, STS, Logs, Secrets Manager</text>
+
+  <rect class="box" x="400" y="266" width="230" height="56" style="stroke:#0891b2"/>
+  <text x="414" y="288" class="h">Application Load Balancer</text>
+  <text x="414" y="306" class="s">AWS LB Controller · ACM TLS · WAF</text>
+
+  <rect class="box" x="1150" y="266" width="380" height="56" style="stroke:#0891b2"/>
+  <text x="1164" y="288" class="h">RDS PostgreSQL 16 (Multi-AZ in prod)</text>
+  <text x="1164" y="306" class="s">db: jupyterhub · argo_workflows · SSL forced · PI + backups</text>
+
+  <rect class="box" x="660" y="266" width="460" height="56" style="stroke:#0891b2"/>
+  <text x="674" y="288" class="h">Amazon EFS (elastic throughput, KMS)</text>
+  <text x="674" y="306" class="s">RWX: JupyterHub homes · team /shared datasets · Ray scratch / checkpoints</text>
+
+  <!-- EKS cluster -->
+  <rect x="400" y="340" width="1130" height="650" rx="12" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.6"/>
+  <text x="416" y="364" class="t" fill="#3730a3">EKS 1.33 · aiml-&lt;env&gt;</text>
+  <text x="740" y="364" class="xs">secrets envelope-encrypted · audit logs → CloudWatch · IMDSv2 hop=1 · access entries (no aws-auth)</text>
+
+  <!-- system node group -->
+  <rect x="420" y="380" width="350" height="290" rx="10" fill="#ffffff" stroke="#6366f1"/>
+  <text x="434" y="402" class="h">System MNG (m6i.large ×2–3) · workload=system</text>
+  <text x="434" y="424" class="lbl">Installed by Terraform (Day-0)</text>
+  <text x="444" y="443" class="s">• Karpenter controller (Pod Identity)</text>
+  <text x="444" y="460" class="s">• AWS Load Balancer Controller</text>
+  <text x="444" y="477" class="s">• metrics-server · EBS + EFS CSI · CoreDNS</text>
+  <text x="444" y="494" class="s">• Argo CD (+ root app-of-apps)</text>
+  <text x="434" y="520" class="lbl">Delivered by Argo CD (GitOps)</text>
+  <text x="444" y="539" class="s">• External Secrets Operator</text>
+  <text x="444" y="556" class="s">• JupyterHub hub/proxy (DB → RDS)</text>
+  <text x="444" y="573" class="s">• Argo Workflows controller + server</text>
+  <text x="444" y="590" class="s">• KubeRay operator · ECK operator</text>
+  <text x="444" y="607" class="s">• NVIDIA GPU operator (device plugin, DCGM)</text>
+  <text x="444" y="624" class="s">• Grafana · Alertmanager · kube-state-metrics</text>
+  <text x="434" y="652" class="xs">sync waves: ESO → config → CRDs → operators → ML apps</text>
+
+  <!-- Karpenter CPU pool -->
+  <rect x="790" y="380" width="350" height="290" rx="10" fill="#ffffff" stroke="#6366f1"/>
+  <text x="804" y="402" class="h">Karpenter NodePool "cpu" · workload=ml-cpu</text>
+  <text x="804" y="420" class="xs">c/m/r gen&gt;5 · Spot+On-Demand · consolidation</text>
+  <rect x="806" y="432" width="318" height="44" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="818" y="451" class="h">ml-inference (FastAPI)</text>
+  <text x="818" y="468" class="s">HPA 2→20 · PDB · hot-reloads latest model</text>
+  <rect x="806" y="484" width="318" height="44" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+  <text x="818" y="503" class="h">Argo Workflows pipeline pods</text>
+  <text x="818" y="520" class="s">validate → tune → train → gate → promote</text>
+  <rect x="806" y="536" width="318" height="44" rx="6" fill="#fefce8" stroke="#ca8a04"/>
+  <text x="818" y="555" class="h">Ray head + CPU workers (KubeRay)</text>
+  <text x="818" y="572" class="s">autoscaler 0→N · Ray Tune HPO · RayJobs</text>
+  <rect x="806" y="588" width="318" height="44" rx="6" fill="#fdf4ff" stroke="#a21caf"/>
+  <text x="818" y="607" class="h">JupyterLab servers (CPU profiles)</text>
+  <text x="818" y="624" class="s">IRSA → S3 · EFS home · culled after idle</text>
+  <text x="806" y="652" class="xs">also hosts: Prometheus · Loki · Elasticsearch · Logstash</text>
+
+  <!-- Karpenter GPU pool -->
+  <rect x="1160" y="380" width="350" height="290" rx="10" fill="#ffffff" stroke="#6366f1"/>
+  <text x="1174" y="402" class="h">Karpenter NodePool "gpu" · workload=ml-gpu</text>
+  <text x="1174" y="420" class="xs">g5/g6 (NVIDIA A10G/L4) · taint nvidia.com/gpu · scale-to-zero</text>
+  <rect x="1176" y="432" width="318" height="56" rx="6" fill="#fefce8" stroke="#ca8a04"/>
+  <text x="1188" y="452" class="h">Ray GPU worker group</text>
+  <text x="1188" y="470" class="s">distributed training · 0→N, requests nvidia.com/gpu</text>
+  <rect x="1176" y="496" width="318" height="56" rx="6" fill="#fdf4ff" stroke="#a21caf"/>
+  <text x="1188" y="516" class="h">JupyterLab GPU profile</text>
+  <text x="1188" y="534" class="s">PyTorch CUDA 12 image · time-slicing in dev</text>
+  <rect x="1176" y="560" width="318" height="56" rx="6" fill="#f8fafc" stroke="#64748b"/>
+  <text x="1188" y="580" class="h">DCGM exporter · device plugin · GFD</text>
+  <text x="1188" y="598" class="s">GPU util / memory / power / XID → Prometheus</text>
+  <text x="1174" y="644" class="xs">AL2023 NVIDIA AMI → driver pre-installed, fast boot</text>
+  <text x="1174" y="659" class="xs">consolidationPolicy WhenEmpty (never evicts running jobs)</text>
+
+  <!-- Observability band -->
+  <rect x="420" y="690" width="1090" height="140" rx="10" fill="#fff7ed" stroke="#ea580c"/>
+  <text x="434" y="712" class="h" fill="#9a3412">Observability</text>
+  <rect x="434" y="724" width="250" height="92" rx="6" class="box"/>
+  <text x="446" y="744" class="h">Metrics</text>
+  <text x="446" y="762" class="s">kube-prometheus-stack</text>
+  <text x="446" y="778" class="s">ServiceMonitors: app, Karpenter,</text>
+  <text x="446" y="794" class="s">Argo CD/WF, Ray, DCGM, JupyterHub</text>
+  <text x="446" y="809" class="xs">SLO burn-rate + cost rules → Alertmanager</text>
+  <rect x="698" y="724" width="250" height="92" rx="6" class="box"/>
+  <text x="710" y="744" class="h">Logs (primary) — Loki</text>
+  <text x="710" y="762" class="s">Grafana Alloy DaemonSet → Loki</text>
+  <text x="710" y="778" class="s">TSDB index + chunks on S3 (IRSA)</text>
+  <text x="710" y="794" class="s">JSON level / model_version metadata</text>
+  <rect x="962" y="724" width="250" height="92" rx="6" class="box"/>
+  <text x="974" y="744" class="h">Logs (search/audit) — ELK on ECK</text>
+  <text x="974" y="762" class="s">Filebeat → Logstash (JSON parse)</text>
+  <text x="974" y="778" class="s">→ Elasticsearch (ILM) → Kibana</text>
+  <text x="974" y="794" class="s">data stream logs-k8s-*</text>
+  <rect x="1226" y="724" width="270" height="92" rx="6" class="box" style="stroke:#ea580c"/>
+  <text x="1238" y="744" class="h">Grafana</text>
+  <text x="1238" y="762" class="s">Prometheus · Loki · ES · CloudWatch</text>
+  <text x="1238" y="778" class="s">dashboards: Inference · Platform ·</text>
+  <text x="1238" y="794" class="s">Performance · SLO / Error Budget</text>
+  <text x="1238" y="809" class="xs">Cost &amp; Billing (OpenCost + AWS/Billing)</text>
+  <path class="ol" d="M684 770 H698"/>
+  <path class="ol" d="M948 770 H962"/>
+  <path class="ol" d="M1212 770 H1226"/>
+
+  <!-- Flow legend band -->
+  <rect x="420" y="846" width="1090" height="130" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="434" y="868" class="h">End-to-end flow</text>
+  <text x="434" y="890" class="s">① PR → CI checks + terraform plan comment  ② merge → terraform apply (dev) · image build → Trivy → ECR → commit tag to values-dev.yaml</text>
+  <text x="434" y="910" class="s">③ Argo CD (pull-based) syncs Helm charts into the cluster  ④ Argo Workflows: validate data → Ray Tune (KubeRay, Karpenter adds nodes) → train → quality gate</text>
+  <text x="434" y="930" class="s">⑤ promote writes models/&lt;name&gt;/latest.json in S3  ⑥ ml-inference replicas hot-reload the new version (no redeploy)  ⑦ ALB serves /v1/predict</text>
+  <text x="434" y="950" class="s">⑧ metrics → Prometheus/Grafana/Alertmanager, logs → Loki + ELK  ⑨ promote-prod.yml opens PR → reviewed merge → prod Argo CD syncs · rollback = git revert</text>
+  <text x="434" y="968" class="xs">Legend: solid = request/data path · green dashed = GitOps sync · orange dashed = telemetry</text>
+
+  <!-- arrows between zones -->
+  <path class="ln" d="M310 470 C 345 470, 345 170, 380 170"/>
+  <text x="318" y="300" class="xs" transform="rotate(-90 318 300)">push images</text>
+  <path class="gl" d="M310 255 C 360 255, 360 520, 420 520"/>
+  <text x="338" y="400" class="xs" fill="#16a34a" transform="rotate(-90 338 400)">Argo CD pulls Git</text>
+  <path class="ln" d="M630 300 H648 V375 H780 V454 H806"/>
+  <text x="654" y="335" class="xs">HTTPS /v1/predict → ml-inference</text>
+</svg>

@@ -1,0 +1,69 @@
+apiVersion: logstash.k8s.elastic.co/v1alpha1
+kind: Logstash
+metadata:
+  name: {{ .Values.name }}
+spec:
+  version: {{ .Values.version }}
+  count: {{ .Values.logstash.count }}
+  elasticsearchRefs:
+    - name: {{ .Values.name }}
+      clusterName: eck          # -> env ECK_ES_HOSTS / ECK_ES_USER / ECK_ES_PASSWORD / ECK_ES_SSL_CERTIFICATE_AUTHORITY
+  services:
+    - name: beats               # -> Service "{{ .Values.name }}-ls-beats"
+      service:
+        spec:
+          type: ClusterIP
+          ports:
+            - name: beats
+              port: 5044
+              targetPort: 5044
+  pipelines:
+    - pipeline.id: k8s-logs
+      config.string: |
+        input {
+          beats { port => 5044 }
+        }
+
+        filter {
+          # Our services log one JSON object per line -> promote fields to the top level
+          if [message] =~ /^\{.*\}$/ {
+            json {
+              source => "message"
+              target => "app"
+              skip_on_invalid_json => true
+            }
+            if [app][level] { mutate { add_field => { "log.level" => "%{[app][level]}" } } }
+            if [app][latency_ms] { mutate { convert => { "[app][latency_ms]" => "float" } } }
+          }
+          mutate {
+            add_field => {
+              "k8s.namespace" => "%{[kubernetes][namespace]}"
+              "k8s.pod"       => "%{[kubernetes][pod][name]}"
+            }
+            remove_field => ["agent", "ecs", "input", "host"]
+          }
+        }
+
+        output {
+          elasticsearch {
+            hosts => [ "${ECK_ES_HOSTS}" ]
+            user => "${ECK_ES_USER}"
+            password => "${ECK_ES_PASSWORD}"
+            ssl_certificate_authorities => "${ECK_ES_SSL_CERTIFICATE_AUTHORITY}"
+            data_stream => "true"
+            data_stream_type => "logs"
+            data_stream_dataset => "k8s"
+            data_stream_namespace => "{{ .Release.Namespace | replace "-" "_" }}"
+          }
+        }
+  podTemplate:
+    spec:
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      containers:
+        - name: logstash
+          env:
+            - name: LS_JAVA_OPTS
+              value: {{ .Values.logstash.javaOpts | quote }}
+          resources:
+            {{- toYaml .Values.logstash.resources | nindent 12 }}

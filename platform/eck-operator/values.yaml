@@ -1,0 +1,10 @@
+installCRDs: true
+replicaCount: 1
+nodeSelector:
+  workload: system
+config:
+  metrics:
+    port: 9091
+podMonitor:
+  enabled: false
+managedNamespaces: []   # watch all namespaces

@@ -1,0 +1,50 @@
+name: Promote to prod
+
+# Opens a PR that copies the image tags currently running in dev into the prod
+# values files. Merging the PR (after review) is the deployment: Argo CD in the
+# prod cluster syncs it. Rollback = revert the PR.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to promote (empty = whatever dev runs now)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          [ -z "$TAG" ] && TAG=$(yq '.image.tag' charts/ml-inference/values-dev.yaml)
+          if [ "$TAG" = "bootstrap" ]; then echo "::error::dev has no built image yet"; exit 1; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Update prod values
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          yq -i '.image.tag = strenv(TAG)' charts/ml-inference/values-prod.yaml
+          yq -i '.images.training.tag = strenv(TAG) | .images.ray.tag = strenv(TAG)' charts/ml-pipelines/values-prod.yaml
+          yq -i '.image.tag = strenv(TAG)' charts/ray-cluster/values-prod.yaml
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: promote/prod-${{ steps.tag.outputs.tag }}
+          title: "deploy(prod): ml images ${{ steps.tag.outputs.tag }}"
+          commit-message: "deploy(prod): ml images ${{ steps.tag.outputs.tag }}"
+          labels: deploy-prod
+          body: |
+            Promotes image tag `${{ steps.tag.outputs.tag }}` (verified in dev) to **prod**.
+
+            Checklist before merging:
+            - [ ] dev smoke test green (`scripts/smoke-test.sh dev`)
+            - [ ] Grafana "ML Inference" dashboard in dev: error ratio < 1%, p95 within SLO
+            - [ ] Training pipeline in dev succeeded with this tag
+
+            Merging deploys via Argo CD. Rollback: revert this PR.

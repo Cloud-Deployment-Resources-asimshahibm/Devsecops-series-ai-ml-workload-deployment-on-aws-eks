@@ -1,0 +1,8 @@
+apiVersion: v2
+name: app-of-apps
+description: >-
+  Root GitOps chart. Renders one Argo CD Application per platform component,
+  ordered by sync-waves. Terraform creates the single root Application that
+  points here with values-<env>.yaml.
+type: application
+version: 1.0.0

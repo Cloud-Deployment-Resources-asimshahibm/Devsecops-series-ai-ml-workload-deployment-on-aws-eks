@@ -1,0 +1,20 @@
+env: prod
+
+images:
+  training:
+    tag: "bootstrap"
+  ray:
+    tag: "bootstrap"
+
+serviceAccount:
+  roleArn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-prod-ml-training
+
+storage:
+  dataBucket: aiml-prod-ml-data-__AWS_ACCOUNT_ID__
+
+model:
+  minAccuracy: "0.90"
+
+schedule:
+  enabled: true
+  autoPromote: "false"   # prod promotion requires a human: argo resume / promote step

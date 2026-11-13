@@ -1,0 +1,4 @@
+env: dev
+secretPrefix: aiml-dev
+jupyterhub:
+  sharedVolumeSize: 100Gi

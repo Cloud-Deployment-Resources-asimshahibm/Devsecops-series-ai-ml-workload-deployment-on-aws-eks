@@ -1,0 +1,26 @@
+prometheus:
+  prometheusSpec:
+    replicas: 2
+    retention: 30d
+    retentionSize: 180GB
+    resources:
+      requests: { cpu: "2", memory: 8Gi }
+      limits: { memory: 16Gi }
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 200Gi
+
+alertmanager:
+  alertmanagerSpec:
+    replicas: 3
+
+grafana:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-prod-grafana
+  replicas: 1   # Grafana HA needs a shared DB; point grafana.ini [database] at RDS to scale out

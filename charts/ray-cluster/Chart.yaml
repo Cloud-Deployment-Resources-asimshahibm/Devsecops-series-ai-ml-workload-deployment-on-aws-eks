@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ray-cluster
+description: Shared autoscaling KubeRay cluster (CPU + GPU worker groups scheduled by Karpenter)
+type: application
+version: 1.0.0
+appVersion: "2.40.0"

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: observability-rules
+description: >-
+  SLO/SLI error-budget engine (multi-window, multi-burn-rate alerts per the
+  Google SRE workbook) and cost/billing recording rules + alerts on top of
+  OpenCost metrics. Thresholds differ per environment via values-<env>.yaml.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

@@ -1,0 +1,76 @@
+crds:
+  install: true
+  keep: true
+
+workflow:
+  serviceAccount:
+    create: true
+    name: argo-workflow
+  rbac:
+    create: true
+
+controller:
+  replicas: 1
+  nodeSelector:
+    workload: system
+  workflowNamespaces: []          # all namespaces
+  metricsConfig:
+    enabled: true
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: kube-prometheus-stack
+  telemetryConfig:
+    enabled: true
+  workflowDefaults:
+    spec:
+      podGC:
+        strategy: OnPodSuccess
+      ttlStrategy:
+        secondsAfterCompletion: 86400
+  persistence:
+    connectionPool:
+      maxIdleConns: 10
+      maxOpenConns: 0
+    nodeStatusOffLoad: true
+    archive: true
+    archiveTTL: 30d
+    postgresql:
+      host: platform-postgres.platform-system.svc.cluster.local
+      port: 5432
+      database: argo_workflows
+      tableName: argo_workflows
+      ssl: true
+      sslMode: require
+      userNameSecret:
+        name: argo-postgres
+        key: username
+      passwordSecret:
+        name: argo-postgres
+        key: password
+
+server:
+  enabled: true
+  replicas: 1
+  nodeSelector:
+    workload: system
+  serviceAccount:
+    create: true
+    name: argo-workflows-server
+  # "server" = UI/API use the server's SA. For production SSO set
+  # authModes: [sso] and configure server.sso with your IdP (GitHub/Okta/Entra).
+  authModes: ["server"]
+  secure: false
+  ingress:
+    enabled: false
+
+useDefaultArtifactRepo: true
+useStaticCredentials: false
+artifactRepository:
+  archiveLogs: true
+  s3:
+    endpoint: s3.amazonaws.com
+    region: us-east-1
+    useSDKCreds: true             # IRSA
+    insecure: false
+    keyFormat: "{{workflow.namespace}}/{{workflow.name}}/{{pod.name}}"

@@ -1,0 +1,102 @@
+{{- /*
+SLO engine. For every entry in .Values.slos this renders:
+  * recording rules  slo:sli_error:ratio_rate{window=...}, slo:burn_rate{window=...}
+  * metadata         slo:objective:ratio, slo:error_budget:ratio, slo:period_days
+  * budget           slo:sli:ratio (achieved SLI), slo:error_budget_remaining:ratio
+  * alerts           SLOErrorBudgetBurn (multi-window, multi-burn-rate), SLOErrorBudgetExhausted, SLOErrorBudgetLow
+*/ -}}
+{{- $period := printf "%dd" (int .Values.slo.periodDays) -}}
+{{- $windows := list "5m" "30m" "1h" "2h" "6h" "1d" "3d" -}}
+{{- $repo := "https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS/blob/main/docs/OBSERVABILITY.md" -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: slo-error-budgets
+  labels:
+    app.kubernetes.io/part-of: ml-platform
+    app.kubernetes.io/component: slo
+spec:
+  groups:
+{{- range .Values.slos }}
+{{- $slo := . }}
+{{- $sel := printf "slo=\"%s\"" .name }}
+{{- $budget := printf "(1 - %v)" .objective }}
+    # ===================================================== {{ .name }} (objective {{ .objective }} over {{ $period }})
+    - name: slo.{{ .name }}.recordings
+      interval: 30s
+      rules:
+        {{- range $w := $windows }}
+        - record: slo:sli_error:ratio_rate
+          expr: |
+            ({{ replace "__WINDOW__" $w $slo.sli.errors }})
+            /
+            ({{ replace "__WINDOW__" $w $slo.sli.total }} > 0)
+          labels: { slo: {{ $slo.name }}, service: {{ $slo.service }}, team: {{ $slo.team }}, window: {{ $w }} }
+        {{- end }}
+        - record: slo:sli_error:ratio_rate
+          expr: |
+            ({{ replace "__WINDOW__" $period $slo.sli.errors }})
+            /
+            ({{ replace "__WINDOW__" $period $slo.sli.total }} > 0)
+          labels: { slo: {{ .name }}, service: {{ .service }}, team: {{ .team }}, window: period }
+        - record: slo:burn_rate
+          expr: slo:sli_error:ratio_rate{ {{ $sel }} } / {{ $budget }}
+          labels: { slo: {{ .name }} }
+        - record: slo:objective:ratio
+          expr: vector({{ .objective }})
+          labels: { slo: {{ .name }}, service: {{ .service }}, team: {{ .team }} }
+        - record: slo:error_budget:ratio
+          expr: vector({{ $budget }})
+          labels: { slo: {{ .name }}, service: {{ .service }}, team: {{ .team }} }
+        - record: slo:period_days
+          expr: vector({{ int $.Values.slo.periodDays }})
+          labels: { slo: {{ .name }}, service: {{ .service }}, team: {{ .team }} }
+        - record: slo:sli:ratio
+          expr: 1 - sum without (window) (slo:sli_error:ratio_rate{ {{ $sel }},window="period"})
+          labels: { slo: {{ .name }} }
+        - record: slo:error_budget_remaining:ratio
+          expr: 1 - sum without (window) (slo:sli_error:ratio_rate{ {{ $sel }},window="period"}) / {{ $budget }}
+          labels: { slo: {{ .name }} }
+
+    - name: slo.{{ .name }}.alerts
+      rules:
+        {{- range $kind, $b := $.Values.slo.burnRates }}
+        {{- if or $slo.page (eq $b.severity "warning") }}
+        - alert: SLOErrorBudgetBurn
+          expr: |
+            slo:burn_rate{ {{ $sel }},window="{{ $b.long }}"} > {{ $b.factor }}
+            and ignoring (window)
+            slo:burn_rate{ {{ $sel }},window="{{ $b.short }}"} > {{ $b.factor }}
+          for: {{ $b.for }}
+          labels:
+            severity: {{ $b.severity }}
+            slo: {{ $slo.name }}
+            service: {{ $slo.service }}
+            team: {{ $slo.team }}
+            burn: {{ $kind }}
+            long_window: {{ $b.long }}
+          annotations:
+            summary: "{{ $slo.name }}: burning error budget {{ $b.factor }}x too fast ({{ $b.long }}/{{ $b.short }} windows)"
+            description: >-
+              {{ $slo.description }}. Burn rate over {{ $b.long }} is {{ "{{" }} $value | printf "%.1f" {{ "}}" }}x
+              (threshold {{ $b.factor }}x). A sustained burn rate of 1x consumes exactly the
+              whole {{ $period }} error budget over the period.
+            runbook_url: {{ $repo }}#error-budget-policy
+            dashboard: /d/slo-error-budget?var-slo={{ $slo.name }}
+        {{- end }}
+        {{- end }}
+        - alert: SLOErrorBudgetExhausted
+          expr: slo:error_budget_remaining:ratio{ {{ $sel }} } <= 0
+          for: 15m
+          labels: { severity: warning, slo: {{ .name }}, service: {{ .service }}, team: {{ .team }} }
+          annotations:
+            summary: "{{ .name }}: error budget for the last {{ $period }} is exhausted"
+            description: "Freeze risky changes for {{ .service }} and prioritise reliability work (error budget policy)."
+            runbook_url: {{ $repo }}#error-budget-policy
+        - alert: SLOErrorBudgetLow
+          expr: slo:error_budget_remaining:ratio{ {{ $sel }} } < {{ $.Values.slo.budgetLowRatio }} and slo:error_budget_remaining:ratio{ {{ $sel }} } > 0
+          for: 1h
+          labels: { severity: info, slo: {{ .name }}, service: {{ .service }}, team: {{ .team }} }
+          annotations:
+            summary: "{{ .name }}: less than {{ mul $.Values.slo.budgetLowRatio 100 }}% of the error budget left"
+{{- end }}

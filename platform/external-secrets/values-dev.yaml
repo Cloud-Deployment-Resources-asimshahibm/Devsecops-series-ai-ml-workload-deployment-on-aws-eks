@@ -1,0 +1,6 @@
+replicaCount: 1
+webhook:
+  replicaCount: 1
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-dev-external-secrets

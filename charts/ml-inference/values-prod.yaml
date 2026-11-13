@@ -1,0 +1,30 @@
+image:
+  tag: "bootstrap" # updated only by the promote-to-prod PR
+
+replicaCount: 3
+
+model:
+  storeUri: s3://aiml-prod-ml-data-__AWS_ACCOUNT_ID__/models
+  refreshSeconds: 60
+
+serviceAccount:
+  roleArn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-prod-ml-inference
+
+ingress:
+  groupName: aiml-prod
+  # host: api.ml.example.com
+  # certificateArn: arn:aws:acm:us-east-1:__AWS_ACCOUNT_ID__:certificate/xxxx
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    memory: 2Gi
+
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 20
+
+podDisruptionBudget:
+  minAvailable: 2

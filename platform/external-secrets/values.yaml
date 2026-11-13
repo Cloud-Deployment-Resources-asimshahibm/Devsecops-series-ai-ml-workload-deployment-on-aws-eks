@@ -1,0 +1,15 @@
+installCRDs: true
+replicaCount: 2
+serviceAccount:
+  name: external-secrets
+nodeSelector:
+  workload: system
+serviceMonitor:
+  enabled: false   # Prometheus CRDs arrive in a later wave; scraped via observability-extras
+webhook:
+  replicaCount: 2
+  nodeSelector:
+    workload: system
+certController:
+  nodeSelector:
+    workload: system

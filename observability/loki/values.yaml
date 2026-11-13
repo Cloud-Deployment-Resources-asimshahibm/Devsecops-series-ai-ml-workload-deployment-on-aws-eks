@@ -1,0 +1,69 @@
+# Loki 3.x, single-binary mode with S3 object storage (TSDB index).
+# Scale path for prod: deploymentMode: SimpleScalable (read/write/backend).
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  storage:
+    type: s3
+    s3:
+      region: us-east-1
+  limits_config:
+    retention_period: 168h        # 7d (overridden per env)
+    ingestion_rate_mb: 16
+    ingestion_burst_size_mb: 32
+    max_query_series: 5000
+    volume_enabled: true
+  compactor:
+    retention_enabled: true
+    delete_request_store: s3
+  pattern_ingester:
+    enabled: true
+
+serviceAccount:
+  create: true
+  name: loki
+
+singleBinary:
+  replicas: 1
+  nodeSelector:
+    workload: ml-cpu
+  persistence:
+    enabled: true
+    storageClass: gp3
+    size: 20Gi
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { memory: 4Gi }
+
+# Disable the scalable targets in single-binary mode
+read: { replicas: 0 }
+write: { replicas: 0 }
+backend: { replicas: 0 }
+
+gateway:
+  enabled: true
+  replicas: 1
+
+chunksCache: { enabled: false }
+resultsCache: { enabled: false }
+lokiCanary: { enabled: false }
+test: { enabled: false }
+minio: { enabled: false }
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack

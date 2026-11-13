@@ -1,0 +1,182 @@
+{{- if .Values.cost.enabled }}
+{{- $c := .Values.cost }}
+{{- /*
+Cost model (OpenCost metrics, USD per hour):
+  node_total_hourly_cost        full price of each node (on-demand list price)
+  node_cpu_hourly_cost          per vCPU-hour     x container_cpu_allocation (max(request, usage))
+  node_ram_hourly_cost          per GiB-hour      x container_memory_allocation_bytes
+  node_gpu_hourly_cost          per GPU-hour      x container_gpu_allocation
+  pv_hourly_cost                per GiB-hour      x PV capacity
+Idle = node spend not allocated to any container (over-provisioning / headroom).
+*/}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cost-allocation
+  labels:
+    app.kubernetes.io/part-of: ml-platform
+    app.kubernetes.io/component: cost
+spec:
+  groups:
+    - name: cost.allocation
+      interval: 1m
+      rules:
+        # ---------------- per namespace
+        - record: namespace:cost_cpu_hourly:usd
+          expr: |
+            sum by (namespace) (
+              sum by (namespace, node) (container_cpu_allocation)
+              * on (node) group_left () avg by (node) (node_cpu_hourly_cost)
+            )
+        - record: namespace:cost_ram_hourly:usd
+          expr: |
+            sum by (namespace) (
+              sum by (namespace, node) (container_memory_allocation_bytes) / 1024 / 1024 / 1024
+              * on (node) group_left () avg by (node) (node_ram_hourly_cost)
+            )
+        - record: namespace:cost_gpu_hourly:usd
+          expr: |
+            sum by (namespace) (
+              sum by (namespace, node) (container_gpu_allocation)
+              * on (node) group_left () avg by (node) (node_gpu_hourly_cost)
+            )
+        - record: namespace:cost_pv_hourly:usd
+          expr: |
+            sum by (namespace) (
+              label_replace(
+                (
+                  avg by (persistentvolume) (pv_hourly_cost)
+                  * on (persistentvolume) avg by (persistentvolume) (kube_persistentvolume_capacity_bytes) / 1024 / 1024 / 1024
+                )
+                * on (persistentvolume) group_left (claim_namespace)
+                  max by (persistentvolume, claim_namespace) (kube_persistentvolume_claim_ref),
+                "namespace", "$1", "claim_namespace", "(.*)"
+              )
+            )
+        - record: namespace:cost_hourly:usd
+          expr: sum by (namespace) ({__name__=~"namespace:cost_(cpu|ram|gpu|pv)_hourly:usd"})
+
+        # ---------------- per node / pool / capacity type / instance type
+        - record: nodepool:cost_hourly:usd
+          expr: |
+            sum by (nodepool) (
+              label_replace(
+                label_replace(
+                  avg by (node) (node_total_hourly_cost)
+                  * on (node) group_left (label_karpenter_sh_nodepool)
+                    max by (node, label_karpenter_sh_nodepool) (kube_node_labels),
+                  "nodepool", "$1", "label_karpenter_sh_nodepool", "(.+)"),
+                "nodepool", "eks-managed-system", "label_karpenter_sh_nodepool", "")
+            )
+        - record: capacity_type:cost_hourly:usd
+          expr: |
+            sum by (capacity_type) (
+              label_replace(
+                label_replace(
+                  avg by (node) (node_total_hourly_cost)
+                  * on (node) group_left (label_karpenter_sh_capacity_type, label_eks_amazonaws_com_capacity_type)
+                    max by (node, label_karpenter_sh_capacity_type, label_eks_amazonaws_com_capacity_type) (kube_node_labels),
+                  "capacity_type", "$1", "label_karpenter_sh_capacity_type", "(.+)"),
+                "capacity_type", "on-demand", "label_eks_amazonaws_com_capacity_type", "ON_DEMAND")
+            )
+        - record: instance_type:cost_hourly:usd
+          expr: sum by (instance_type) (avg by (node, instance_type) (node_total_hourly_cost))
+
+        # ---------------- cluster totals
+        - record: cluster:cost_nodes_hourly:usd
+          expr: sum(avg by (node) (node_total_hourly_cost))
+        - record: cluster:cost_storage_hourly:usd
+          expr: sum(namespace:cost_pv_hourly:usd) or vector(0)
+        - record: cluster:cost_control_plane_hourly:usd
+          expr: sum(kubecost_cluster_management_cost) or vector(0.10)   # EKS control plane $0.10/h
+        - record: cluster:cost_hourly:usd
+          expr: |
+            cluster:cost_nodes_hourly:usd
+            + on () cluster:cost_storage_hourly:usd
+            + on () cluster:cost_control_plane_hourly:usd
+        - record: cluster:cost_allocated_hourly:usd
+          expr: sum({__name__=~"namespace:cost_(cpu|ram|gpu)_hourly:usd"})
+        - record: cluster:cost_idle_hourly:usd
+          expr: clamp_min(cluster:cost_nodes_hourly:usd - on () cluster:cost_allocated_hourly:usd, 0)
+        - record: cluster:cost_idle:ratio
+          expr: cluster:cost_idle_hourly:usd / on () (cluster:cost_nodes_hourly:usd > 0)
+        - record: cluster:cost_monthly_projection:usd
+          expr: cluster:cost_hourly:usd * {{ $c.hoursPerMonth }}
+        - record: cluster:cost_budget_monthly:usd
+          expr: vector({{ $c.monthlyBudgetUSD }})
+        - record: cluster:cost_budget_utilisation:ratio
+          expr: cluster:cost_monthly_projection:usd / on () cluster:cost_budget_monthly:usd
+
+        # ---------------- GPU
+        - record: cluster:cost_gpu_hourly:usd
+          expr: |
+            sum(avg by (node) (node_gpu_hourly_cost) * on (node) avg by (node) (node_gpu_count)) or vector(0)
+        - record: cluster:cost_gpu_unallocated_hourly:usd
+          expr: |
+            clamp_min(cluster:cost_gpu_hourly:usd - on () (sum(namespace:cost_gpu_hourly:usd) or vector(0)), 0)
+
+    - name: cost.unit-economics
+      interval: 5m
+      rules:
+        - record: ml:inference_cost_per_1k_predictions:usd
+          expr: |
+            sum(namespace:cost_hourly:usd{namespace="ml-serving"})
+            / on ()
+            (sum(rate(mlserve_predictions_total{namespace="ml-serving"}[1h])) * 3600 / 1000 > 0)
+        - record: ml:training_cost_per_run:usd
+          expr: |
+            (sum(avg_over_time(namespace:cost_hourly:usd{namespace=~"ml-training|ray"}[1d])) * 24)
+            / on ()
+            (sum(increase(argo_workflows_ml_pipeline_runs_total[1d])) > 0)
+        - record: ml:gpu_cost_per_utilised_gpu_hour:usd
+          expr: |
+            cluster:cost_gpu_hourly:usd
+            / on ()
+            (sum(DCGM_FI_DEV_GPU_UTIL) / 100 > 0)
+
+    - name: cost.alerts
+      rules:
+        - alert: CostMonthlyProjectionOverBudget
+          expr: cluster:cost_budget_utilisation:ratio > 1
+          for: 6h
+          labels: { severity: warning, team: ml-platform, category: cost }
+          annotations:
+            summary: "{{ .Values.cluster }}: projected monthly spend {{ "{{" }} $value | humanizePercentage {{ "}}" }} of the ${{ $c.monthlyBudgetUSD }} budget"
+            description: "Run-rate x {{ $c.hoursPerMonth }}h exceeds the budget for 6h. Check the Cost & Billing dashboard (top namespaces, idle cost, GPU)."
+            dashboard: /d/ml-cost-billing
+        - alert: CostHourlySpike
+          expr: cluster:cost_hourly:usd > {{ $c.spikeFactor }} * avg_over_time(cluster:cost_hourly:usd[7d]) and cluster:cost_hourly:usd > 1
+          for: 1h
+          labels: { severity: warning, team: ml-platform, category: cost }
+          annotations:
+            summary: "{{ .Values.cluster }}: hourly cost ${{ "{{" }} $value | printf \"%.2f\" {{ "}}" }} is >{{ $c.spikeFactor }}x the 7-day average"
+            dashboard: /d/ml-cost-billing
+        - alert: CostIdleCapacityHigh
+          expr: cluster:cost_idle:ratio > {{ $c.idleRatioWarn }}
+          for: 6h
+          labels: { severity: info, team: ml-platform, category: cost }
+          annotations:
+            summary: "{{ "{{" }} $value | humanizePercentage {{ "}}" }} of node spend is idle (not requested by any pod) for 6h"
+            description: "Right-size requests, check Karpenter consolidation and NodePool instance sizes."
+        - alert: CostUnallocatedGPU
+          expr: cluster:cost_gpu_unallocated_hourly:usd > {{ $c.unallocatedGpuHourlyUSD }}
+          for: 30m
+          labels: { severity: warning, team: ml-platform, category: cost }
+          annotations:
+            summary: "Paying ${{ "{{" }} $value | printf \"%.2f\" {{ "}}" }}/h for GPUs no pod has requested for 30m"
+            description: "A GPU node is not being consolidated. Check `kubectl get nodeclaims -l karpenter.sh/nodepool=gpu` and pods with do-not-disrupt."
+        {{- range $ns, $cap := $c.namespaceHourlyUSD }}
+        - alert: CostNamespaceOverCap
+          expr: namespace:cost_hourly:usd{namespace="{{ $ns }}"} > {{ $cap }}
+          for: 2h
+          labels: { severity: warning, team: ml-platform, category: cost, namespace: {{ $ns }} }
+          annotations:
+            summary: "Namespace {{ $ns }} costs ${{ "{{" }} $value | printf \"%.2f\" {{ "}}" }}/h (cap ${{ $cap }}/h) for 2h"
+        {{- end }}
+        - alert: OpenCostMetricsMissing
+          expr: absent(node_total_hourly_cost)
+          for: 30m
+          labels: { severity: warning, team: ml-platform, category: cost }
+          annotations:
+            summary: "OpenCost metrics missing — cost dashboard and cost alerts are blind"
+{{- end }}

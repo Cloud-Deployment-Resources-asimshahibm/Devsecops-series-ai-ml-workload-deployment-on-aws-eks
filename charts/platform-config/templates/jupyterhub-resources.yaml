@@ -1,0 +1,23 @@
+# Service account every notebook pod runs as (IRSA: S3 datasets rw, models ro)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jupyter-user
+  namespace: {{ .Values.jupyterhub.namespace }}
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::{{ .Values.accountId }}:role/aiml-{{ .Values.env }}-jupyter-user
+---
+# Team-wide shared datasets volume on EFS, mounted into every notebook at ~/shared
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jupyter-shared
+  namespace: {{ .Values.jupyterhub.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: {{ .Values.jupyterhub.sharedVolumeSize }}

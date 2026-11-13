@@ -1,0 +1,146 @@
+{{- $image := printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.serviceAccount.name }}
+  annotations:
+    eks.amazonaws.com/role-arn: {{ required "serviceAccount.roleArn is required" .Values.serviceAccount.roleArn }}
+---
+{{- if .Values.storage.scratch.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.clusterName }}-scratch
+  annotations:
+    argocd.argoproj.io/sync-options: Delete=false   # never drop shared data on app deletion
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: {{ .Values.storage.scratch.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.scratch.size }}
+{{- end }}
+---
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: {{ .Values.clusterName }}
+  labels:
+    app.kubernetes.io/part-of: ml-platform
+spec:
+  rayVersion: {{ .Values.rayVersion | quote }}
+  enableInTreeAutoscaling: true
+  autoscalerOptions:
+    upscalingMode: {{ .Values.autoscaler.upscalingMode }}
+    idleTimeoutSeconds: {{ .Values.autoscaler.idleTimeoutSeconds }}
+    resources:
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { cpu: 500m, memory: 1Gi }
+  headGroupSpec:
+    rayStartParams:
+      dashboard-host: "0.0.0.0"
+      num-cpus: "0"            # keep tasks off the head node
+      metrics-export-port: "8080"
+    template:
+      metadata:
+        labels:
+          ray.io/node-type: head
+      spec:
+        serviceAccountName: {{ .Values.serviceAccount.name }}
+        nodeSelector:
+          {{- toYaml .Values.head.nodeSelector | nindent 10 }}
+        containers:
+          - name: ray-head
+            image: {{ $image }}
+            ports:
+              - { name: gcs, containerPort: 6379 }
+              - { name: dashboard, containerPort: 8265 }
+              - { name: client, containerPort: 10001 }
+              - { name: metrics, containerPort: 8080 }
+            env:
+              - { name: AWS_REGION, value: us-east-1 }
+              - { name: RAY_GRAFANA_HOST, value: "http://kube-prometheus-stack-grafana.monitoring.svc" }
+              - { name: RAY_PROMETHEUS_HOST, value: "http://kube-prometheus-stack-prometheus.monitoring.svc:9090" }
+            resources:
+              {{- toYaml .Values.head.resources | nindent 14 }}
+            lifecycle:
+              preStop:
+                exec:
+                  command: ["/bin/sh", "-c", "ray stop"]
+            volumeMounts:
+              - { name: shm, mountPath: /dev/shm }
+              {{- if .Values.storage.scratch.enabled }}
+              - { name: scratch, mountPath: /mnt/scratch }
+              {{- end }}
+        volumes:
+          - name: shm
+            emptyDir: { medium: Memory, sizeLimit: 2Gi }
+          {{- if .Values.storage.scratch.enabled }}
+          - name: scratch
+            persistentVolumeClaim:
+              claimName: {{ .Values.clusterName }}-scratch
+          {{- end }}
+  workerGroupSpecs:
+    {{- range .Values.workerGroups }}
+    - groupName: {{ .name }}
+      replicas: {{ .replicas }}
+      minReplicas: {{ .minReplicas }}
+      maxReplicas: {{ .maxReplicas }}
+      rayStartParams:
+        metrics-export-port: "8080"
+      template:
+        metadata:
+          labels:
+            ray.io/node-type: worker
+            ray.io/worker-group: {{ .name }}
+        spec:
+          serviceAccountName: {{ $.Values.serviceAccount.name }}
+          nodeSelector:
+            {{- toYaml .nodeSelector | nindent 12 }}
+          {{- with .tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: ray-worker
+              image: {{ $image }}
+              ports:
+                - { name: metrics, containerPort: 8080 }
+              env:
+                - { name: AWS_REGION, value: us-east-1 }
+              resources:
+                {{- toYaml .resources | nindent 16 }}
+              lifecycle:
+                preStop:
+                  exec:
+                    command: ["/bin/sh", "-c", "ray stop"]
+              volumeMounts:
+                - { name: shm, mountPath: /dev/shm }
+                {{- if $.Values.storage.scratch.enabled }}
+                - { name: scratch, mountPath: /mnt/scratch }
+                {{- end }}
+          volumes:
+            - name: shm
+              emptyDir: { medium: Memory, sizeLimit: 4Gi }
+            {{- if $.Values.storage.scratch.enabled }}
+            - name: scratch
+              persistentVolumeClaim:
+                claimName: {{ $.Values.clusterName }}-scratch
+            {{- end }}
+    {{- end }}
+---
+# Ray head + workers export Prometheus metrics on :8080
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ .Values.clusterName }}
+spec:
+  selector:
+    matchLabels:
+      ray.io/cluster: {{ .Values.clusterName }}
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_label_ray_io_node_type]
+          targetLabel: ray_node_type

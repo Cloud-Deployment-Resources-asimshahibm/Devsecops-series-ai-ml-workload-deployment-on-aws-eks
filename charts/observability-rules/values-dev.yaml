@@ -1,0 +1,11 @@
+env: dev
+cluster: aiml-dev
+
+slo:
+  periodDays: 7           # dev Prometheus keeps 15d; a 7d window keeps the math honest
+
+cost:
+  monthlyBudgetUSD: 800
+  namespaceHourlyUSD:
+    ray: 2
+    jupyterhub: 2

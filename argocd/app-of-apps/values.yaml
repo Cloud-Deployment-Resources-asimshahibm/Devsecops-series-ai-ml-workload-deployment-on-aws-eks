@@ -1,0 +1,151 @@
+env: dev
+project: ml-platform
+repoURL: https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS.git
+revision: main
+
+# Every component of the platform. Three kinds:
+#   chart:      third-party Helm chart + our values from Git ($values/<values>/values[-env].yaml)
+#   path:       local Helm chart in this repo (values.yaml + values-<env>.yaml)
+#   kustomize:  plain manifests / kustomization in this repo
+#
+# Sync waves (lower first; a wave waits until the previous one is Healthy):
+#  -30 node pools, secrets operator     -25 platform-config (namespaces, secrets, DB init)
+#  -20 Prometheus/Grafana (CRDs)        -15 operators: GPU, ECK, KubeRay, Loki
+#  -10 Argo Workflows, Alloy, ELK, OpenCost, SLO/cost rules, dashboards   -5 JupyterHub
+#    0 ML workloads: Ray cluster, pipelines, inference
+apps:
+  # ------------------------------------------------------------- foundation
+  karpenter-nodepools:
+    enabled: true
+    wave: -30
+    namespace: kube-system
+    path: charts/karpenter-nodepools
+
+  external-secrets:
+    enabled: true
+    wave: -30
+    namespace: external-secrets
+    chart: { repo: https://charts.external-secrets.io, name: external-secrets, version: 0.12.1 }
+    values: platform/external-secrets
+
+  platform-config:
+    enabled: true
+    wave: -25
+    namespace: platform-system
+    path: charts/platform-config
+
+  # ------------------------------------------------------------- observability
+  kube-prometheus-stack:
+    enabled: true
+    wave: -20
+    namespace: monitoring
+    chart: { repo: https://prometheus-community.github.io/helm-charts, name: kube-prometheus-stack, version: 66.2.1 }
+    values: observability/kube-prometheus-stack
+    syncOptions: ["ServerSideApply=true"]   # CRDs exceed client-side apply annotation limit
+
+  loki:
+    enabled: true
+    wave: -15
+    namespace: monitoring
+    chart: { repo: https://grafana.github.io/helm-charts, name: loki, version: 6.24.0 }
+    values: observability/loki
+
+  alloy:
+    enabled: true
+    wave: -10
+    namespace: monitoring
+    chart: { repo: https://grafana.github.io/helm-charts, name: alloy, version: 0.10.1 }
+    values: observability/alloy
+
+  observability-extras:
+    enabled: true
+    wave: -10
+    namespace: monitoring
+    kustomize: observability/extras     # Grafana dashboards, extra ServiceMonitors, platform alerts
+
+  observability-rules:
+    enabled: true
+    wave: -10
+    namespace: monitoring
+    path: charts/observability-rules     # SLO/SLI error budgets + cost recording rules & alerts
+
+  opencost:
+    enabled: true
+    wave: -10
+    namespace: opencost
+    chart: { repo: https://opencost.github.io/opencost-helm-chart, name: opencost, version: 2.5.33 }
+    values: observability/opencost
+
+  eck-operator:
+    enabled: true
+    wave: -15
+    namespace: elastic-system
+    chart: { repo: https://helm.elastic.co, name: eck-operator, version: 2.16.0 }
+    values: platform/eck-operator
+    syncOptions: ["ServerSideApply=true"]
+
+  elastic-stack:
+    enabled: true
+    wave: -10
+    namespace: logging
+    path: charts/elastic-stack
+    syncOptions: ["SkipDryRunOnMissingResource=true"]
+
+  # ------------------------------------------------------------- compute
+  gpu-operator:
+    enabled: true
+    wave: -15
+    namespace: gpu-operator
+    chart: { repo: https://helm.ngc.nvidia.com/nvidia, name: gpu-operator, version: v24.9.1 }
+    values: platform/gpu-operator
+    syncOptions: ["ServerSideApply=true"]
+
+  kuberay-operator:
+    enabled: true
+    wave: -15
+    namespace: ray-system
+    chart: { repo: https://ray-project.github.io/kuberay-helm/, name: kuberay-operator, version: 1.2.2 }
+    values: platform/kuberay-operator
+    syncOptions: ["ServerSideApply=true"]
+
+  # ------------------------------------------------------------- ML tooling
+  argo-workflows:
+    enabled: true
+    wave: -10
+    namespace: argo
+    chart: { repo: https://argoproj.github.io/argo-helm, name: argo-workflows, version: 0.45.1 }
+    values: platform/argo-workflows
+    syncOptions: ["ServerSideApply=true"]
+
+  jupyterhub:
+    enabled: true
+    wave: -5
+    namespace: jupyterhub
+    chart: { repo: https://hub.jupyter.org/helm-chart/, name: jupyterhub, version: 4.0.0 }
+    values: platform/jupyterhub
+    # z2jh generates its hub secret with `lookup`, which Argo CD cannot run;
+    # ignore drift so the cookie secret is not rotated on every sync.
+    ignoreDifferences:
+      - kind: Secret
+        name: hub
+        jsonPointers: ["/data"]
+    syncOptions: ["RespectIgnoreDifferences=true"]
+
+  # ------------------------------------------------------------- ML workloads
+  ray-cluster:
+    enabled: true
+    wave: 0
+    namespace: ray
+    path: charts/ray-cluster
+
+  ml-pipelines:
+    enabled: true
+    wave: 0
+    namespace: ml-training
+    path: charts/ml-pipelines
+
+  ml-inference:
+    enabled: true
+    wave: 0
+    namespace: ml-serving
+    path: charts/ml-inference

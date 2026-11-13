@@ -1,0 +1,45 @@
+# OpenCost (CNCF) — real-time Kubernetes cost allocation.
+# Reads usage from our Prometheus, prices nodes from the public AWS price list,
+# and exports cost metrics (node_total_hourly_cost, container_cpu_allocation,
+# node_gpu_hourly_cost, pv_hourly_cost, ...) that Prometheus scrapes back.
+# Recording rules + alerts: charts/observability-rules. Dashboard: "Cost & Billing".
+#
+# Accuracy note: without a Spot data feed, Spot nodes are priced at the
+# on-demand list price (an upper bound). AWS Budgets / CloudWatch
+# EstimatedCharges (also on the dashboard) remain the billing source of truth.
+
+serviceAccount:
+  name: opencost
+
+opencost:
+  exporter:
+    defaultClusterId: aiml        # overridden per env
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { memory: 1Gi }
+    extraEnv:
+      CLOUD_PROVIDER: AWS
+      CLUSTER_REGION: us-east-1
+      EMIT_KSM_V1_METRICS: "false"   # kube-state-metrics already provides these
+      EMIT_KSM_V1_METRICS_ONLY: "false"
+
+  prometheus:
+    internal:
+      enabled: true
+      serviceName: kube-prometheus-stack-prometheus
+      namespaceName: monitoring
+      port: 9090
+
+  metrics:
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: kube-prometheus-stack
+      scrapeInterval: 1m
+      honorLabels: true
+
+  ui:
+    enabled: true   # kubectl -n opencost port-forward svc/opencost 9090:9090
+
+  nodeSelector:
+    workload: system

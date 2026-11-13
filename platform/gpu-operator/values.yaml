@@ -1,0 +1,55 @@
+# Karpenter launches GPU nodes from the EKS AL2023 NVIDIA AMI, which already
+# ships the NVIDIA driver and container toolkit. The operator therefore only
+# runs the device plugin, GPU feature discovery, DCGM exporter (metrics) and
+# the validator — no driver compilation, fast node start-up.
+driver:
+  enabled: false
+toolkit:
+  enabled: false
+
+operator:
+  defaultRuntime: containerd
+  nodeSelector:
+    workload: system
+
+nfd:
+  enabled: true
+
+devicePlugin:
+  enabled: true
+  config:
+    # Time-slicing lets several notebooks share one GPU in dev (set replicas: 1 for exclusive)
+    create: true
+    name: time-slicing-config
+    default: any
+    data:
+      any: |-
+        version: v1
+        flags:
+          migStrategy: none
+        sharing:
+          timeSlicing:
+            renameByDefault: false
+            resources:
+              - name: nvidia.com/gpu
+                replicas: 1
+
+dcgmExporter:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    additionalLabels:
+      release: kube-prometheus-stack
+
+gfd:
+  enabled: true
+
+migManager:
+  enabled: false
+
+daemonsets:
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule

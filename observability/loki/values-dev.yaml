@@ -1,0 +1,12 @@
+loki:
+  storage:
+    bucketNames:
+      chunks: aiml-dev-loki-__AWS_ACCOUNT_ID__
+      ruler: aiml-dev-loki-__AWS_ACCOUNT_ID__
+      admin: aiml-dev-loki-__AWS_ACCOUNT_ID__
+  limits_config:
+    retention_period: 168h
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-dev-loki

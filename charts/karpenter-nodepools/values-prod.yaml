@@ -1,0 +1,19 @@
+clusterName: aiml-prod
+nodeRole: aiml-prod-karpenter-node
+kmsKeyAlias: alias/aiml-prod-platform
+
+costTags:
+  Project: aiml
+  Environment: prod
+
+amiAlias: al2023@latest   # TODO: pin, e.g. al2023@v20250116, and bump via PR
+
+cpu:
+  capacityTypes: ["on-demand"]
+  limits:
+    cpu: "400"
+    memory: 1600Gi
+
+gpu:
+  limits:
+    nvidia.com/gpu: "16"

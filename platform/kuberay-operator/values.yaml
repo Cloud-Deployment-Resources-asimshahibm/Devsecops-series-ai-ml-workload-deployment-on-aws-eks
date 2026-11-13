@@ -1,0 +1,12 @@
+nodeSelector:
+  workload: system
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+# watch all namespaces (RayClusters live in "ray", RayJobs too)
+singleNamespaceInstall: false
+batchScheduler:
+  enabled: false

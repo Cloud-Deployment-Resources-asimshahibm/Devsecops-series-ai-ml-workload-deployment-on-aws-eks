@@ -1,0 +1,20 @@
+loki:
+  storage:
+    bucketNames:
+      chunks: aiml-prod-loki-__AWS_ACCOUNT_ID__
+      ruler: aiml-prod-loki-__AWS_ACCOUNT_ID__
+      admin: aiml-prod-loki-__AWS_ACCOUNT_ID__
+  limits_config:
+    retention_period: 720h   # 30d
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-prod-loki
+
+singleBinary:
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits: { memory: 8Gi }
+
+chunksCache: { enabled: true, allocatedMemory: 1024 }
+resultsCache: { enabled: true, allocatedMemory: 512 }

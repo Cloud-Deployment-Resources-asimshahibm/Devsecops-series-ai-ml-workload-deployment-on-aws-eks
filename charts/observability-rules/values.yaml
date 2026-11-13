@@ -1,0 +1,91 @@
+env: dev
+cluster: aiml-dev
+
+# ------------------------------------------------------------------------------
+# SLOs
+# Each SLI is expressed as two PromQL expressions with the placeholder
+# __WINDOW__ (replaced by 5m, 30m, 1h, 2h, 6h, 1d, 3d and the SLO period):
+#   errors: rate/increase of BAD events      total: rate/increase of ALL events
+# The chart records:
+#   slo:sli_error:ratio_rate<w>      error ratio per window
+#   slo:burn_rate:<w>                error ratio / error budget
+#   slo:error_budget_remaining:ratio 1 - consumed fraction over the period
+#   slo:objective:ratio, slo:error_budget:ratio, slo:period_days (metadata)
+# and alerts: fast burn (page), slow burn (page), budget burning (ticket),
+# budget exhausted / low.
+# ------------------------------------------------------------------------------
+slo:
+  periodDays: 30          # rolling compliance window (Prometheus retention must be >= this)
+  # Multi-window multi-burn-rate thresholds (Google SRE workbook, 99.9%-style defaults):
+  # 2% of a 30d budget in 1h, 5% in 6h -> page; 10% in 3d -> ticket
+  burnRates:
+    pageFast:   { long: 1h, short: 5m,  factor: 14.4, for: 2m,  severity: critical }
+    pageSlow:   { long: 6h, short: 30m, factor: 6,    for: 15m, severity: critical }
+    ticketFast: { long: 1d, short: 2h,  factor: 3,    for: 1h,  severity: warning }
+    ticketSlow: { long: 3d, short: 6h,  factor: 1,    for: 3h,  severity: warning }
+  budgetLowRatio: 0.25    # info alert when < 25% of the budget remains
+
+slos:
+  - name: ml-inference-availability
+    service: ml-inference
+    team: ml-platform
+    objective: 0.995      # 99.5% of /v1/predict requests are not 5xx
+    description: "Share of prediction requests answered without a server error"
+    page: true
+    sli:
+      errors: sum(rate(mlserve_http_requests_total{namespace="ml-serving",route="/v1/predict",status=~"5.."}[__WINDOW__]))
+      total: sum(rate(mlserve_http_requests_total{namespace="ml-serving",route="/v1/predict"}[__WINDOW__]))
+
+  - name: ml-inference-latency
+    service: ml-inference
+    team: ml-platform
+    objective: 0.99       # 99% of /v1/predict requests complete in <= 500 ms
+    description: "Share of prediction requests served within 500 ms"
+    page: true
+    sli:
+      errors: >-
+        (sum(rate(mlserve_http_request_duration_seconds_count{namespace="ml-serving",route="/v1/predict"}[__WINDOW__]))
+        - sum(rate(mlserve_http_request_duration_seconds_bucket{namespace="ml-serving",route="/v1/predict",le="0.5"}[__WINDOW__])))
+      total: sum(rate(mlserve_http_request_duration_seconds_count{namespace="ml-serving",route="/v1/predict"}[__WINDOW__]))
+
+  - name: ml-model-freshness
+    service: ml-inference
+    team: ml-science
+    objective: 0.99       # 99% of replica-minutes have a model loaded
+    description: "Share of time every inference replica is serving a loaded model"
+    page: false
+    sli:
+      errors: sum(count_over_time((mlserve_model_loaded{namespace="ml-serving"} == 0)[__WINDOW__:1m]))
+      total: sum(count_over_time(mlserve_model_loaded{namespace="ml-serving"}[__WINDOW__:1m]))
+
+  - name: ml-training-pipeline-success
+    service: ml-pipelines
+    team: ml-science
+    objective: 0.95       # 95% of training pipeline runs succeed
+    description: "Share of ml-training-pipeline runs finishing Succeeded"
+    page: false           # low volume -> ticket-only alerts
+    sli:
+      errors: sum(increase(argo_workflows_ml_pipeline_runs_total{status=~"Failed|Error"}[__WINDOW__]))
+      total: sum(increase(argo_workflows_ml_pipeline_runs_total[__WINDOW__]))
+
+  - name: jupyterhub-spawn-success
+    service: jupyterhub
+    team: ml-platform
+    objective: 0.98       # 98% of notebook server spawns succeed
+    description: "Share of JupyterHub server spawns that succeed"
+    page: false
+    sli:
+      errors: sum(increase(jupyterhub_server_spawn_duration_seconds_count{status!="success"}[__WINDOW__]))
+      total: sum(increase(jupyterhub_server_spawn_duration_seconds_count[__WINDOW__]))
+
+# ------------------------------------------------------------------------------
+# Cost (OpenCost metrics, USD)
+# ------------------------------------------------------------------------------
+cost:
+  enabled: true
+  hoursPerMonth: 730
+  monthlyBudgetUSD: 800          # keep in sync with terraform envs/<env> budgets.monthly_total_usd
+  spikeFactor: 1.5               # hourly cost > 1.5x its 7-day average
+  idleRatioWarn: 0.5             # > 50% of node spend not requested by any pod
+  unallocatedGpuHourlyUSD: 0.5   # paying for GPU capacity no pod requested
+  namespaceHourlyUSD: {}         # optional per-namespace caps, e.g. { ray: 3, jupyterhub: 2 }

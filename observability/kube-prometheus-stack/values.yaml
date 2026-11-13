@@ -1,0 +1,170 @@
+fullnameOverride: kube-prometheus-stack
+
+crds:
+  enabled: true
+
+defaultRules:
+  create: true
+  rules:
+    etcd: false              # managed control plane
+    kubeScheduler: false
+    kubeControllerManager: false
+    kubeProxy: false
+
+kubeEtcd: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeProxy: { enabled: false }
+
+prometheus:
+  prometheusSpec:
+    replicas: 1
+    retention: 15d
+    retentionSize: 45GB
+    scrapeInterval: 30s
+    # Discover ServiceMonitors / PodMonitors / rules from every namespace and app
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    enableFeatures:
+      - exemplar-storage
+    nodeSelector:
+      workload: ml-cpu
+    resources:
+      requests: { cpu: "1", memory: 4Gi }
+      limits: { memory: 8Gi }
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+
+alertmanager:
+  alertmanagerSpec:
+    replicas: 1
+    nodeSelector:
+      workload: system
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ["alertname", "namespace", "severity"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: default
+      routes:
+        - receiver: "null"
+          matchers: ['alertname = "Watchdog"']
+        - receiver: "null"
+          matchers: ['alertname = "InfoInhibitor"']
+        - receiver: critical
+          matchers: ['severity = "critical"']
+    receivers:
+      - name: "null"
+      - name: default
+      # Add Slack/PagerDuty here, e.g. with an AlertmanagerConfig CR or:
+      # slack_configs:
+      #   - api_url_file: /etc/alertmanager/secrets/alertmanager-slack/url
+      #     channel: "#ml-platform-alerts"
+      #     send_resolved: true
+      - name: critical
+    inhibit_rules:
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity =~ "warning|info"']
+        equal: ["namespace", "alertname"]
+
+grafana:
+  enabled: true
+  replicas: 1
+  nodeSelector:
+    workload: system
+  admin:
+    existingSecret: grafana-admin       # synced from Secrets Manager by External Secrets
+    userKey: admin-user
+    passwordKey: admin-password
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 10Gi
+  defaultDashboardsTimezone: browser
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      enabled: true
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki-gateway.monitoring.svc.cluster.local
+      jsonData:
+        maxLines: 2000
+        derivedFields:
+          - name: request_id
+            matcherRegex: '"request_id":\s*"(\w+)"'
+            url: '$${__value.raw}'
+    - name: CloudWatch
+      uid: cloudwatch
+      type: cloudwatch
+      access: proxy
+      jsonData:
+        authType: default          # IRSA role aiml-<env>-grafana (see values-<env>.yaml)
+        defaultRegion: us-east-1   # AWS/Billing metrics only exist in us-east-1
+    - name: Elasticsearch (ELK)
+      uid: elasticsearch
+      type: elasticsearch
+      access: proxy
+      url: https://logging-es-http.logging.svc.cluster.local:9200
+      basicAuth: true
+      basicAuthUser: grafana          # read-only ES user (file realm, role "viewer")
+      jsonData:
+        index: "logs-k8s-*"
+        timeField: "@timestamp"
+        tlsSkipVerify: true
+      secureJsonData:
+        basicAuthPassword: $__file{/etc/secrets/es/password}
+  extraSecretMounts:
+    - name: es-grafana-user
+      secretName: grafana-es-credentials    # External Secrets (platform-config)
+      mountPath: /etc/secrets/es
+      readOnly: true
+      optional: true
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/"
+    analytics:
+      check_for_updates: false
+    users:
+      viewers_can_edit: false
+
+prometheus-node-exporter:
+  tolerations:
+    - operator: Exists      # run on GPU-tainted nodes too
+
+kube-state-metrics:
+  nodeSelector:
+    workload: system
+  # expose node labels -> cost/performance by NodePool, capacity type, instance type
+  metricLabelsAllowlist:
+    - nodes=[karpenter.sh/nodepool,karpenter.sh/capacity-type,eks.amazonaws.com/capacityType,node.kubernetes.io/instance-type,workload,topology.kubernetes.io/zone]
+    - pods=[app.kubernetes.io/name,app.kubernetes.io/part-of]

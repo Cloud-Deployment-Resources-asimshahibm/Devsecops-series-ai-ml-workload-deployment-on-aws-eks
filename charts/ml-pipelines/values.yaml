@@ -1,0 +1,44 @@
+env: dev
+
+images:
+  training:
+    repository: __AWS_ACCOUNT_ID__.dkr.ecr.us-east-1.amazonaws.com/aiml/ml-training
+    tag: "bootstrap"        # bumped by CI
+  ray:
+    repository: __AWS_ACCOUNT_ID__.dkr.ecr.us-east-1.amazonaws.com/aiml/ml-ray
+    tag: "bootstrap"        # bumped by CI
+
+serviceAccount:
+  name: ml-training
+  roleArn: ""               # IRSA role <project>-<env>-ml-training
+
+storage:
+  dataBucket: ""            # aiml-<env>-ml-data-<acct>
+
+model:
+  name: iris-classifier
+  minAccuracy: "0.85"
+
+ray:
+  clusterName: ml-ray       # existing RayCluster (charts/ray-cluster) in namespace "ray"
+  namespace: ray
+
+schedule:
+  enabled: true
+  cron: "0 3 * * *"         # nightly retrain at 03:00 UTC
+  timezone: UTC
+  useRay: "true"
+  autoPromote: "true"
+
+# GitHub Actions CI role is mapped (EKS access entry) to this k8s group.
+ciGroup: ci-workflow-submitters
+
+nodeSelector:
+  workload: ml-cpu
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    memory: 4Gi

@@ -1,0 +1,21 @@
+image:
+  tag: "bootstrap"
+
+replicaCount: 1
+
+model:
+  storeUri: s3://aiml-dev-ml-data-__AWS_ACCOUNT_ID__/models
+  refreshSeconds: 30
+
+serviceAccount:
+  roleArn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-dev-ml-inference
+
+ingress:
+  groupName: aiml-dev
+
+autoscaling:
+  minReplicas: 1
+  maxReplicas: 3
+
+podDisruptionBudget:
+  enabled: false

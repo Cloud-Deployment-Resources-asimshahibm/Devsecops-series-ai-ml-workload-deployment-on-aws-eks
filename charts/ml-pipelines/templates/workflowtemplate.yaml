@@ -1,0 +1,186 @@
+{{- $train := printf "%s:%s" .Values.images.training.repository .Values.images.training.tag -}}
+{{- $ray := printf "%s:%s" .Values.images.ray.repository .Values.images.ray.tag -}}
+{{- $store := printf "s3://%s/models" (required "storage.dataBucket is required" .Values.storage.dataBucket) -}}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: ml-training-pipeline
+  labels:
+    app.kubernetes.io/part-of: ml-platform
+spec:
+  entrypoint: pipeline
+  serviceAccountName: {{ .Values.serviceAccount.name }}
+  ttlStrategy:
+    secondsAfterCompletion: 86400
+  podGC:
+    strategy: OnPodSuccess
+  activeDeadlineSeconds: 7200
+  archiveLogs: true
+  nodeSelector:
+    {{- toYaml .Values.nodeSelector | nindent 4 }}
+  arguments:
+    parameters:
+      - name: model-name
+        value: {{ .Values.model.name | quote }}
+      - name: min-accuracy
+        value: {{ .Values.model.minAccuracy | quote }}
+      - name: use-ray
+        value: "true"
+        enum: ["true", "false"]
+      - name: auto-promote
+        value: "true"
+        enum: ["true", "false"]
+      - name: dataset-uri
+        value: ""             # empty = bundled Iris dataset
+      - name: git-sha
+        value: "manual"
+
+  # Custom Prometheus metrics emitted by the workflow controller
+  metrics:
+    prometheus:
+      - name: ml_pipeline_duration_seconds
+        help: "Duration of the ML training pipeline"
+        labels:
+          - key: status
+            value: "{{`{{workflow.status}}`}}"
+          - key: model
+            value: "{{`{{workflow.parameters.model-name}}`}}"
+        gauge:
+          realtime: false
+          value: "{{`{{workflow.duration}}`}}"
+      - name: ml_pipeline_runs_total
+        help: "ML training pipeline runs by status"
+        labels:
+          - key: status
+            value: "{{`{{workflow.status}}`}}"
+        counter:
+          value: "1"
+
+  templates:
+    - name: pipeline
+      dag:
+        tasks:
+          - name: validate-data
+            template: validate-data
+          - name: hyperparameter-tuning
+            template: ray-tune
+            depends: validate-data.Succeeded
+            when: "{{`{{workflow.parameters.use-ray}}`}} == true"
+          - name: train
+            template: train
+            depends: "validate-data.Succeeded && (hyperparameter-tuning.Succeeded || hyperparameter-tuning.Skipped)"
+            arguments:
+              parameters:
+                # if tuning was skipped the file does not exist and train.py falls back to defaults
+                - name: params-uri
+                  value: "s3://{{ .Values.storage.dataBucket }}/tuning/{{`{{workflow.uid}}`}}/best_params.json"
+          - name: approval
+            template: approval
+            depends: train.Succeeded
+            when: "{{`{{workflow.parameters.auto-promote}}`}} == false"
+          - name: promote
+            template: promote
+            depends: "train.Succeeded && (approval.Succeeded || approval.Skipped)"
+            arguments:
+              parameters:
+                - name: version
+                  value: "{{`{{tasks.train.outputs.parameters.version}}`}}"
+
+    # ---------------------------------------------------------------- steps
+    - name: validate-data
+      container:
+        image: {{ $train }}
+        args: ["trainer.validate_data", "--dataset-uri", "{{`{{workflow.parameters.dataset-uri}}`}}", "--report-file", "/tmp/report.json"]
+        resources:
+          requests: { cpu: 250m, memory: 512Mi }
+      outputs:
+        artifacts:
+          - name: data-report
+            path: /tmp/report.json
+            archive:
+              none: {}
+
+    - name: ray-tune
+      # Submits a RayJob onto the shared KubeRay cluster and waits for it.
+      resource:
+        action: create
+        setOwnerReference: false
+        successCondition: status.jobStatus == SUCCEEDED
+        failureCondition: status.jobStatus in (FAILED, STOPPED)
+        manifest: |
+          apiVersion: ray.io/v1
+          kind: RayJob
+          metadata:
+            generateName: ml-tune-
+            namespace: {{ .Values.ray.namespace }}
+            labels:
+              workflows.argoproj.io/workflow: "{{`{{workflow.name}}`}}"
+          spec:
+            clusterSelector:
+              ray.io/cluster: {{ .Values.ray.clusterName }}
+            entrypoint: >-
+              python -m trainer.ray_tune
+              --output-uri s3://{{ .Values.storage.dataBucket }}/tuning/{{`{{workflow.uid}}`}}/best_params.json
+            ttlSecondsAfterFinished: 3600
+            submitterPodTemplate:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: ray-job-submitter
+                    image: {{ $ray }}
+                    resources:
+                      requests: { cpu: 200m, memory: 256Mi }
+
+    - name: train
+      inputs:
+        parameters:
+          - name: params-uri
+      container:
+        image: {{ $train }}
+        args:
+          - trainer.train
+          - --model-store={{ $store }}
+          - --model-name={{`{{workflow.parameters.model-name}}`}}
+          - --min-accuracy={{`{{workflow.parameters.min-accuracy}}`}}
+          - --params-uri={{`{{inputs.parameters.params-uri}}`}}
+          - --version-file=/tmp/version
+          - --metrics-file=/tmp/metrics.json
+        env:
+          - name: GIT_SHA
+            value: "{{`{{workflow.parameters.git-sha}}`}}"
+          - name: ARGO_WORKFLOW_NAME
+            value: "{{`{{workflow.name}}`}}"
+          - name: AWS_REGION
+            value: us-east-1
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+      outputs:
+        parameters:
+          - name: version
+            valueFrom:
+              path: /tmp/version
+        artifacts:
+          - name: metrics
+            path: /tmp/metrics.json
+            archive:
+              none: {}
+
+    - name: approval
+      suspend: {}   # `argo resume <wf>` or the "Resume" button in the Argo UI
+
+    - name: promote
+      inputs:
+        parameters:
+          - name: version
+      container:
+        image: {{ $train }}
+        args:
+          - trainer.promote
+          - --model-store={{ $store }}
+          - --model-name={{`{{workflow.parameters.model-name}}`}}
+          - --version={{`{{inputs.parameters.version}}`}}
+        env:
+          - name: AWS_REGION
+            value: us-east-1
+        resources:
+          requests: { cpu: 100m, memory: 256Mi }

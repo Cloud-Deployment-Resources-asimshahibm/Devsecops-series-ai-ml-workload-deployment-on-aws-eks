@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.project }}
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-100"
+spec:
+  description: AI/ML platform ({{ .Values.env }})
+  sourceRepos:
+    - {{ .Values.repoURL }}
+    {{- range $name, $app := .Values.apps }}
+    {{- if and $app.enabled $app.chart }}
+    - {{ $app.chart.repo }}
+    {{- end }}
+    {{- end }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  # Operators install CRDs, webhooks and cluster RBAC
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  orphanedResources:
+    warn: true
+  roles:
+    - name: read-only
+      description: Read-only access for ML engineers
+      policies:
+        - p, proj:{{ .Values.project }}:read-only, applications, get, {{ .Values.project }}/*, allow

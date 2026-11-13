@@ -1,0 +1,13 @@
+artifactRepository:
+  s3:
+    bucket: aiml-dev-wf-artifacts-__AWS_ACCOUNT_ID__
+
+server:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-dev-argo-workflows
+
+workflow:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-dev-argo-workflows

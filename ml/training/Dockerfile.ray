@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1.7
+# Ray head/worker image with our trainer package baked in.
+# Build context: ./ml   (docker build -f ml/training/Dockerfile.ray ml)
+#
+# CPU and GPU worker groups use the same Python environment; for CUDA
+# workloads switch the base to rayproject/ray:2.40.0-py312-gpu via RAY_BASE.
+ARG RAY_BASE=rayproject/ray:2.40.0-py312
+FROM ${RAY_BASE}
+
+COPY training/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+COPY --chown=ray:users common/mlstore.py /app/mlstore.py
+COPY --chown=ray:users training/trainer /app/trainer
+ENV PYTHONPATH=/app
+
+ARG GIT_SHA=local
+ENV GIT_SHA=${GIT_SHA}
+WORKDIR /app

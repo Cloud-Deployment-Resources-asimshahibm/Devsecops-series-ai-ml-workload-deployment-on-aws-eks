@@ -1,0 +1,4 @@
+env: prod
+# Production tracks main as well; promotion happens through values-prod.yaml
+# changes (image tags) merged via reviewed PRs. To freeze prod to a release
+# tag instead, set:  revision: v1.2.0

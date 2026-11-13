@@ -1,0 +1,9 @@
+image:
+  tag: "bootstrap"
+
+serviceAccount:
+  roleArn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-prod-ml-training
+
+storage:
+  scratch:
+    size: 500Gi

@@ -1,0 +1,73 @@
+{{- range $name, $app := .Values.apps }}
+{{- if $app.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $name }}
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $app.wave | default 0 | quote }}
+  labels:
+    app.kubernetes.io/part-of: ml-platform
+    env: {{ $.Values.env }}
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $.Values.project }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $app.namespace }}
+  {{- if $app.chart }}
+  sources:
+    - repoURL: {{ $app.chart.repo }}
+      chart: {{ $app.chart.name }}
+      targetRevision: {{ $app.chart.version | quote }}
+      helm:
+        releaseName: {{ $app.releaseName | default $name }}
+        ignoreMissingValueFiles: true
+        valueFiles:
+          - $values/{{ $app.values }}/values.yaml
+          - $values/{{ $app.values }}/values-{{ $.Values.env }}.yaml
+    - repoURL: {{ $.Values.repoURL }}
+      targetRevision: {{ $.Values.revision }}
+      ref: values
+  {{- else if $app.kustomize }}
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ $.Values.revision }}
+    path: {{ $app.kustomize }}
+  {{- else }}
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ $.Values.revision }}
+    path: {{ $app.path }}
+    helm:
+      releaseName: {{ $app.releaseName | default $name }}
+      ignoreMissingValueFiles: true
+      valueFiles:
+        - values.yaml
+        - values-{{ $.Values.env }}.yaml
+  {{- end }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+      {{- range $app.syncOptions }}
+      - {{ . }}
+      {{- end }}
+  {{- with $app.ignoreDifferences }}
+  ignoreDifferences:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

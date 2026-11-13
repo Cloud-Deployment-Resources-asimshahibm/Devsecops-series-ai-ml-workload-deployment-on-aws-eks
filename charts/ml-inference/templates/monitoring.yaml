@@ -1,0 +1,69 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ml-inference.fullname" . }}
+  labels:
+    {{- include "ml-inference.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ml-inference.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics/
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- end }}
+---
+{{- if .Values.metrics.prometheusRule.enabled }}
+{{- $sel := printf "namespace=\"%s\",service=\"%s\"" .Release.Namespace (include "ml-inference.fullname" .) }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "ml-inference.fullname" . }}
+  labels:
+    {{- include "ml-inference.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: ml-inference.slo
+      rules:
+        - record: mlserve:request_error_ratio:rate5m
+          expr: |
+            sum(rate(mlserve_http_requests_total{ {{ $sel }},status=~"5.."}[5m]))
+            / clamp_min(sum(rate(mlserve_http_requests_total{ {{ $sel }} }[5m])), 1e-9)
+        - record: mlserve:request_latency_p95:5m
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(mlserve_http_request_duration_seconds_bucket{ {{ $sel }},route="/v1/predict"}[5m])))
+        - alert: MLInferenceHighErrorRate
+          expr: mlserve:request_error_ratio:rate5m > {{ .Values.metrics.prometheusRule.errorRatio }}
+          for: 5m
+          labels: { severity: critical, team: ml-platform }
+          annotations:
+            summary: "ml-inference 5xx ratio above {{ mul .Values.metrics.prometheusRule.errorRatio 100 }}%"
+            runbook_url: https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS/blob/main/docs/RUNBOOK.md#ops-high-error-rate
+        - alert: MLInferenceHighLatency
+          expr: mlserve:request_latency_p95:5m > {{ .Values.metrics.prometheusRule.latencyP95Seconds }}
+          for: 10m
+          labels: { severity: warning, team: ml-platform }
+          annotations:
+            summary: "ml-inference p95 latency above {{ .Values.metrics.prometheusRule.latencyP95Seconds }}s"
+        - alert: MLInferenceModelNotLoaded
+          expr: min(mlserve_model_loaded{ {{ $sel }} }) == 0
+          for: 10m
+          labels: { severity: critical, team: ml-platform }
+          annotations:
+            summary: "At least one ml-inference replica has no model loaded"
+            description: "Check that the training pipeline promoted a model (latest.json) and IRSA access to S3."
+        - alert: MLInferenceModelLoadFailures
+          expr: increase(mlserve_model_load_failures_total{ {{ $sel }} }[15m]) > 3
+          labels: { severity: warning, team: ml-platform }
+          annotations:
+            summary: "ml-inference repeatedly failing to load the model from S3"
+        - alert: MLInferenceLowConfidenceDrift
+          expr: |
+            histogram_quantile(0.5, sum by (le) (rate(mlserve_prediction_confidence_bucket{ {{ $sel }} }[1h]))) < 0.7
+          for: 1h
+          labels: { severity: info, team: ml-science }
+          annotations:
+            summary: "Median prediction confidence < 0.7 for 1h — possible data drift; consider retraining"
+{{- end }}

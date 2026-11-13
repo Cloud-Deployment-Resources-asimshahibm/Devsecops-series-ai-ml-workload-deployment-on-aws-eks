@@ -1,0 +1,65 @@
+name: Run training pipeline
+
+# Submits the Argo WorkflowTemplate "ml-training-pipeline" in the target cluster
+# and streams its progress. The CI role can ONLY create/read Workflows in the
+# ml-training namespace (EKS access entry -> group -> Role in charts/ml-pipelines).
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [dev, prod]
+        default: dev
+      use_ray:
+        description: Run distributed hyper-parameter tuning on KubeRay first
+        type: boolean
+        default: true
+      auto_promote:
+        description: Promote automatically if the quality gate passes
+        type: boolean
+        default: true
+      min_accuracy:
+        description: Quality gate (test accuracy)
+        default: "0.85"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_CI }}
+          aws-region: us-east-1
+      - name: kubeconfig
+        run: aws eks update-kubeconfig --name aiml-${{ github.event.inputs.environment }} --region us-east-1
+      - name: Install argo CLI
+        run: |
+          curl -sSL -o argo.gz https://github.com/argoproj/argo-workflows/releases/download/v3.6.2/argo-linux-amd64.gz
+          gunzip argo.gz && chmod +x argo && sudo mv argo /usr/local/bin/argo
+      - name: Submit workflow
+        id: submit
+        run: |
+          WF=$(argo submit -n ml-training --from workflowtemplate/ml-training-pipeline \
+                 -p use-ray=${{ github.event.inputs.use_ray }} \
+                 -p auto-promote=${{ github.event.inputs.auto_promote }} \
+                 -p min-accuracy=${{ github.event.inputs.min_accuracy }} \
+                 -p git-sha=${GITHUB_SHA::12} \
+                 -l triggered-by=github-actions -o name)
+          echo "workflow=$WF" >> "$GITHUB_OUTPUT"
+          echo "Submitted $WF"
+      - name: Wait for completion
+        run: argo watch -n ml-training ${{ steps.submit.outputs.workflow }} --status Succeeded,Failed,Error
+      - name: Result
+        if: always()
+        run: |
+          argo get -n ml-training ${{ steps.submit.outputs.workflow }}
+          PHASE=$(argo get -n ml-training ${{ steps.submit.outputs.workflow }} -o json | jq -r .status.phase)
+          echo "### Training pipeline: $PHASE" >> "$GITHUB_STEP_SUMMARY"
+          [ "$PHASE" = "Succeeded" ]

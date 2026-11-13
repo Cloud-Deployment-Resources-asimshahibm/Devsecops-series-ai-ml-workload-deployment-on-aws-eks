@@ -1,0 +1,11 @@
+elasticsearch:
+  count: 1
+  storage: 30Gi
+  resources:
+    requests: { cpu: 500m, memory: 2Gi }
+    limits: { memory: 2Gi }
+  javaOpts: "-Xms1g -Xmx1g"
+  retentionDays: 7
+
+logstash:
+  count: 1

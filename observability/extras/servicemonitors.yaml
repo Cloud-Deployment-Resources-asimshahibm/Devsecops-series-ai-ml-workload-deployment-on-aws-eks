@@ -1,0 +1,63 @@
+# Scrape targets for components installed before Prometheus CRDs existed
+# (Terraform-installed Karpenter / Argo CD) or whose charts lack a monitor.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: karpenter
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: karpenter
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd
+spec:
+  namespaceSelector:
+    matchNames: [argocd]
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [argocd-metrics, argocd-server-metrics, argocd-repo-server]
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+    - port: metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: jupyterhub
+spec:
+  namespaceSelector:
+    matchNames: [jupyterhub]
+  selector:
+    matchLabels:
+      app: jupyterhub
+      component: hub
+  endpoints:
+    - port: hub
+      path: /hub/metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: external-secrets
+spec:
+  namespaceSelector:
+    matchNames: [external-secrets]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: external-secrets
+  endpoints:
+    - port: metrics
+      interval: 60s

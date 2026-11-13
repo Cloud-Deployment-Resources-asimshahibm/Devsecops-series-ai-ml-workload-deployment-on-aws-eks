@@ -1,0 +1,8 @@
+apiVersion: v2
+name: platform-config
+description: >-
+  Cluster glue: External Secrets store + secrets (RDS, OAuth), per-app Postgres
+  database bootstrap Job, IRSA service accounts and shared EFS volumes.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

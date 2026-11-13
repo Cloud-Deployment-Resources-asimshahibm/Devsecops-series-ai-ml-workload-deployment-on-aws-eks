@@ -1,0 +1,83 @@
+# Defaults shared by every environment. Env files (values-dev.yaml /
+# values-prod.yaml) override only what differs. CI bumps image.tag in dev;
+# the promote workflow copies it to prod via PR.
+
+image:
+  repository: __AWS_ACCOUNT_ID__.dkr.ecr.us-east-1.amazonaws.com/aiml/ml-inference
+  tag: "bootstrap" # replaced by CI on first build
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+model:
+  name: iris-classifier
+  storeUri: ""          # s3://<data-bucket>/models  (set per env)
+  version: latest       # pin a version to freeze serving
+  refreshSeconds: 60
+
+serviceAccount:
+  create: true
+  name: ml-inference
+  roleArn: ""           # IRSA role (ml-inference), set per env
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: alb
+  host: ""              # empty = match any host on the ALB DNS name
+  groupName: ""         # share one ALB across ingresses
+  certificateArn: ""    # set to enable HTTPS (ACM)
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Karpenter "cpu" NodePool label
+nodeSelector:
+  workload: ml-cpu
+tolerations: []
+
+topologySpreadConstraints:
+  enabled: true
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+  prometheusRule:
+    enabled: true
+    latencyP95Seconds: 0.5
+    errorRatio: 0.05
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+extraEnv: []

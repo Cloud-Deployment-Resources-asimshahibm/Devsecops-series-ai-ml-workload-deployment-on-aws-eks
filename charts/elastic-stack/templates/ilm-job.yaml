@@ -1,0 +1,45 @@
+# Applies an ILM policy + index template for the logs-k8s-* data streams so
+# storage stays bounded. Runs after every sync (idempotent PUTs).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: es-ilm-setup
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: ilm
+          image: curlimages/curl:8.11.1
+          env:
+            - name: ES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.name }}-es-elastic-user
+                  key: elastic
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              ES="https://{{ .Values.name }}-es-http:9200"
+              C="curl -sfk -u elastic:${ES_PASSWORD} -H Content-Type:application/json"
+              until $C "$ES/_cluster/health?wait_for_status=yellow&timeout=30s"; do sleep 10; done
+              $C -X PUT "$ES/_ilm/policy/logs-k8s" -d '{
+                "policy": { "phases": {
+                  "hot":    { "actions": { "rollover": { "max_age": "1d", "max_primary_shard_size": "30gb" } } },
+                  "delete": { "min_age": "{{ .Values.elasticsearch.retentionDays }}d", "actions": { "delete": {} } }
+                } } }'
+              $C -X PUT "$ES/_index_template/logs-k8s" -d '{
+                "index_patterns": ["logs-k8s-*"],
+                "data_stream": {},
+                "priority": 500,
+                "composed_of": ["logs@mappings", "logs@settings"],
+                "template": { "settings": {
+                  "index.lifecycle.name": "logs-k8s",
+                  "number_of_replicas": {{ if ge (int .Values.elasticsearch.count) 2 }}1{{ else }}0{{ end }}
+                } } }'
+              echo "ILM configured"

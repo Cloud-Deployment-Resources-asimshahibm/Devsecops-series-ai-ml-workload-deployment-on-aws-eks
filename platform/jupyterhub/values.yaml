@@ -1,0 +1,144 @@
+# Zero to JupyterHub (z2jh) 4.x
+# - state in RDS PostgreSQL (secret from External Secrets)
+# - GitHub OAuth login restricted to the org
+# - per-user home on EFS + team-wide shared EFS volume
+# - CPU and GPU profiles; Karpenter provisions the matching node on demand
+# - notebook pods run as SA jupyter-user (IRSA -> S3 datasets)
+
+hub:
+  nodeSelector:
+    workload: system
+  db:
+    type: other               # URL injected below from the jupyterhub-db secret
+  extraEnv:
+    JUPYTERHUB_DB_URL:
+      valueFrom:
+        secretKeyRef: { name: jupyterhub-db, key: url }
+    OAUTH_CLIENT_ID:
+      valueFrom:
+        secretKeyRef: { name: jupyterhub-github-oauth, key: client_id }
+    OAUTH_CLIENT_SECRET:
+      valueFrom:
+        secretKeyRef: { name: jupyterhub-github-oauth, key: client_secret }
+  extraConfig:
+    00-db.py: |
+      import os
+      c.JupyterHub.db_url = os.environ["JUPYTERHUB_DB_URL"]
+    10-metrics.py: |
+      # Prometheus can scrape /hub/metrics without a token (cluster-internal only)
+      c.JupyterHub.authenticate_prometheus = False
+  config:
+    JupyterHub:
+      authenticator_class: github
+      admin_access: true
+    GitHubOAuthenticator:
+      oauth_callback_url: ""   # set per env: https://<host>/hub/oauth_callback
+      allowed_organizations:
+        - Cloud-Deployment-Resources-asimshahibm
+      scope:
+        - read:org
+    Authenticator:
+      admin_users:
+        - asimshahibm
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { memory: 1Gi }
+
+proxy:
+  service:
+    type: ClusterIP
+  chp:
+    nodeSelector:
+      workload: system
+
+ingress:
+  enabled: false   # see values-<env>.yaml
+
+scheduling:
+  userScheduler:
+    enabled: false       # Karpenter handles bin-packing/scale-down
+  podPriority:
+    enabled: true
+  userPlaceholder:
+    enabled: false
+
+prePuller:
+  hook:
+    enabled: false       # helm hooks become Argo hooks; continuous puller is enough
+  continuous:
+    enabled: false
+
+cull:
+  enabled: true
+  timeout: 3600          # stop idle servers after 1h -> GPU/CPU nodes scale down
+  every: 300
+
+singleuser:
+  serviceAccountName: jupyter-user
+  cmd: jupyterhub-singleuser
+  defaultUrl: /lab
+  uid: 1000
+  fsGid: 100
+  nodeSelector:
+    workload: ml-cpu
+  storage:
+    type: dynamic
+    capacity: 20Gi
+    dynamic:
+      storageClass: efs-sc
+      pvcNameTemplate: claim-{username}
+      storageAccessModes: [ReadWriteMany]
+    extraVolumes:
+      - name: shared
+        persistentVolumeClaim:
+          claimName: jupyter-shared
+      - name: shm
+        emptyDir: { medium: Memory, sizeLimit: 2Gi }
+    extraVolumeMounts:
+      - name: shared
+        mountPath: /home/jovyan/shared
+      - name: shm
+        mountPath: /dev/shm
+  extraEnv:
+    AWS_REGION: us-east-1
+    RAY_ADDRESS: ray://ml-ray-head-svc.ray.svc.cluster.local:10001   # `import ray; ray.init()` from a notebook
+  image:
+    name: quay.io/jupyter/scipy-notebook
+    tag: python-3.11
+  cpu:
+    guarantee: 1
+    limit: 2
+  memory:
+    guarantee: 4G
+    limit: 8G
+  profileList:
+    - display_name: "CPU — small (2 vCPU / 8 GB)"
+      description: "Data exploration, pandas, scikit-learn"
+      default: true
+    - display_name: "CPU — large (8 vCPU / 32 GB)"
+      description: "Feature engineering, larger in-memory datasets"
+      kubespawner_override:
+        cpu_guarantee: 6
+        cpu_limit: 8
+        mem_guarantee: 24G
+        mem_limit: 32G
+    - display_name: "GPU — 1x NVIDIA A10G (PyTorch, CUDA 12)"
+      description: "Deep learning. Karpenter launches a g5/g6 node (~3-5 min cold start)."
+      kubespawner_override:
+        image: quay.io/jupyter/pytorch-notebook:cuda12-python-3.11
+        cpu_guarantee: 3
+        cpu_limit: 4
+        mem_guarantee: 12G
+        mem_limit: 14G
+        extra_resource_limits:
+          nvidia.com/gpu: "1"
+        node_selector:
+          workload: ml-gpu
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+  networkPolicy:
+    enabled: true
+    egressAllowRules:
+      privateIPs: true    # reach the Ray cluster and in-VPC endpoints (S3, STS)

@@ -1,0 +1,21 @@
+hub:
+  config:
+    GitHubOAuthenticator:
+      oauth_callback_url: https://jupyter.ml.example.com/hub/oauth_callback   # <- your domain
+
+ingress:
+  enabled: true
+  ingressClassName: alb
+  hosts:
+    - jupyter.ml.example.com
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.name: aiml-prod
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:__AWS_ACCOUNT_ID__:certificate/REPLACE_ME
+    # alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:...   # recommended
+
+cull:
+  timeout: 7200

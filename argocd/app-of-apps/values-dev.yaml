@@ -1,0 +1,3 @@
+env: dev
+# All components enabled in dev. To save cost you can flip e.g.
+# apps.elastic-stack.enabled=false and rely on Loki for logs.

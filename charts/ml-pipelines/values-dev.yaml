@@ -1,0 +1,16 @@
+env: dev
+
+images:
+  training:
+    tag: "bootstrap"
+  ray:
+    tag: "bootstrap"
+
+serviceAccount:
+  roleArn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-dev-ml-training
+
+storage:
+  dataBucket: aiml-dev-ml-data-__AWS_ACCOUNT_ID__
+
+schedule:
+  enabled: false   # dev retrains on demand (GitHub Actions "Run training pipeline")

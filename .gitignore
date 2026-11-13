@@ -1,0 +1,39 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+terraform/global/terraform.tfvars
+.terraform.lock.hcl.bak
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+ml/artifacts/
+ml/pytest.xml
+
+# Helm
+charts/*/charts/
+charts/*/Chart.lock
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Secrets — never commit
+*.pem
+*.key
+.env
+kubeconfig*

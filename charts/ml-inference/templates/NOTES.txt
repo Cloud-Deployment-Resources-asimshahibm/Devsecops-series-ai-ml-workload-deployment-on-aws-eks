@@ -1,0 +1,5 @@
+ml-inference {{ .Values.image.tag }} deployed to {{ .Release.Namespace }}.
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "ml-inference.fullname" . }} 8080:{{ .Values.service.port }}
+  curl -s localhost:8080/v1/predict -H 'content-type: application/json' \
+       -d '{"instances": [[5.1, 3.5, 1.4, 0.2]]}'

@@ -1,0 +1,36 @@
+version: 8.17.0
+name: logging
+
+elasticsearch:
+  count: 3
+  storage: 100Gi
+  storageClass: gp3
+  resources:
+    requests: { cpu: "1", memory: 4Gi }
+    limits: { memory: 4Gi }
+  javaOpts: "-Xms2g -Xmx2g"
+  # ILM: hot 7d (rollover 1d/30GB) -> delete at retentionDays
+  retentionDays: 30
+
+kibana:
+  count: 1
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { memory: 2Gi }
+
+logstash:
+  count: 2
+  resources:
+    requests: { cpu: 500m, memory: 1536Mi }
+    limits: { memory: 1536Mi }
+  javaOpts: "-Xms1g -Xmx1g"
+
+filebeat:
+  resources:
+    requests: { cpu: 100m, memory: 200Mi }
+    limits: { memory: 400Mi }
+  # Only ship platform + ML namespaces to ELK (Loki receives everything)
+  namespaces: ["ml-serving", "ml-training", "ray", "jupyterhub", "argo", "argocd", "kube-system"]
+
+nodeSelector:
+  workload: ml-cpu

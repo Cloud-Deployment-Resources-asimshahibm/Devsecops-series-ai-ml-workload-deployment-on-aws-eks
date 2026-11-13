@@ -1,0 +1,25 @@
+{{- if .Values.schedule.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: ml-training-nightly
+spec:
+  schedules:
+    - {{ .Values.schedule.cron | quote }}
+  timezone: {{ .Values.schedule.timezone }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    workflowTemplateRef:
+      name: ml-training-pipeline
+    arguments:
+      parameters:
+        - name: use-ray
+          value: {{ .Values.schedule.useRay | quote }}
+        - name: auto-promote
+          value: {{ .Values.schedule.autoPromote | quote }}
+        - name: git-sha
+          value: {{ .Values.images.training.tag | quote }}
+{{- end }}

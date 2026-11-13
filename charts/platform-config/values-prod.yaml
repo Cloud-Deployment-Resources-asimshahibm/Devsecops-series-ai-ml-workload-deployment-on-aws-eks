@@ -1,0 +1,4 @@
+env: prod
+secretPrefix: aiml-prod
+jupyterhub:
+  sharedVolumeSize: 1Ti

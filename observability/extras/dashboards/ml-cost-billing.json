@@ -1,0 +1,1352 @@
+{
+ "uid": "ml-cost-billing",
+ "title": "ML Platform \u2014 Cost & Billing",
+ "description": "OpenCost allocation + AWS billing. Budgets & anomaly alerts: AWS Budgets / Cost Anomaly Detection (Terraform).",
+ "tags": [
+  "ml",
+  "cost",
+  "finops"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "1m",
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "templating": {
+  "list": [
+   {
+    "name": "datasource",
+    "label": "Prometheus",
+    "type": "datasource",
+    "query": "prometheus",
+    "current": {
+     "text": "Prometheus",
+     "value": "prometheus"
+    },
+    "hide": 0
+   }
+  ]
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "Run-rate & budget (OpenCost \u2014 in-cluster)",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Cluster cost / hour",
+   "description": "Nodes + persistent volumes + EKS control plane, priced by OpenCost (on-demand list prices).",
+   "gridPos": {
+    "x": 0,
+    "y": 1,
+    "w": 4,
+    "h": 5
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "cluster:cost_hourly:usd",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 2
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Projected monthly",
+   "description": "Current hourly run-rate x 730 h",
+   "gridPos": {
+    "x": 4,
+    "y": 1,
+    "w": 4,
+    "h": 5
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "cluster:cost_monthly_projection:usd",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 0
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "id": 4,
+   "type": "gauge",
+   "title": "Budget used (projection)",
+   "description": "Projected monthly / monthly budget (charts/observability-rules values).",
+   "gridPos": {
+    "x": 8,
+    "y": 1,
+    "w": 4,
+    "h": 5
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "cluster:cost_budget_utilisation:ratio",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0,
+     "max": 1.5,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.8
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "showThresholdMarkers": true
+   }
+  },
+  {
+   "id": 5,
+   "type": "stat",
+   "title": "Cost in selected range",
+   "description": "Integral of the hourly run-rate across the dashboard time range.",
+   "gridPos": {
+    "x": 12,
+    "y": 1,
+    "w": 4,
+    "h": 5
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum_over_time(cluster:cost_hourly:usd[$__range:1h])",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 2
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "id": 6,
+   "type": "gauge",
+   "title": "Idle (unrequested) node spend",
+   "description": "",
+   "gridPos": {
+    "x": 16,
+    "y": 1,
+    "w": 4,
+    "h": 5
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "cluster:cost_idle:ratio",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0,
+     "max": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.3
+       },
+       {
+        "color": "red",
+        "value": 0.5
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "showThresholdMarkers": true
+   }
+  },
+  {
+   "id": 7,
+   "type": "stat",
+   "title": "Unallocated GPU / hour",
+   "description": "",
+   "gridPos": {
+    "x": 20,
+    "y": 1,
+    "w": 4,
+    "h": 5
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "cluster:cost_gpu_unallocated_hourly:usd",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 2,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 0.5
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Hourly cost breakdown",
+   "description": "",
+   "gridPos": {
+    "x": 0,
+    "y": 6,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "cluster:cost_allocated_hourly:usd",
+     "legendFormat": "allocated to pods"
+    },
+    {
+     "refId": "B",
+     "expr": "cluster:cost_idle_hourly:usd",
+     "legendFormat": "idle capacity"
+    },
+    {
+     "refId": "C",
+     "expr": "cluster:cost_storage_hourly:usd",
+     "legendFormat": "storage (PV)"
+    },
+    {
+     "refId": "D",
+     "expr": "cluster:cost_control_plane_hourly:usd",
+     "legendFormat": "EKS control plane"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "custom": {
+      "fillOpacity": 25,
+      "stacking": {
+       "mode": "normal"
+      },
+      "drawStyle": "line",
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "bottom",
+     "calcs": [
+      "mean",
+      "max",
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "Run-rate vs budget (monthly)",
+   "description": "",
+   "gridPos": {
+    "x": 12,
+    "y": 6,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "cluster:cost_monthly_projection:usd",
+     "legendFormat": "projected monthly"
+    },
+    {
+     "refId": "B",
+     "expr": "cluster:cost_budget_monthly:usd",
+     "legendFormat": "budget"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "custom": {
+      "fillOpacity": 10,
+      "stacking": {
+       "mode": "none"
+      },
+      "drawStyle": "line",
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "bottom",
+     "calcs": [
+      "mean",
+      "max",
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 10,
+   "type": "row",
+   "title": "Allocation \u2014 who spends what",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 14,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Cost by namespace ($/h)",
+   "description": "",
+   "gridPos": {
+    "x": 0,
+    "y": 15,
+    "w": 12,
+    "h": 9
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "topk(12, namespace:cost_hourly:usd)",
+     "legendFormat": "{{namespace}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "custom": {
+      "fillOpacity": 25,
+      "stacking": {
+       "mode": "normal"
+      },
+      "drawStyle": "line",
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "bottom",
+     "calcs": [
+      "mean",
+      "max",
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 12,
+   "type": "piechart",
+   "title": "Share by namespace",
+   "description": "",
+   "gridPos": {
+    "x": 12,
+    "y": 15,
+    "w": 6,
+    "h": 9
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "topk(10, namespace:cost_hourly:usd)",
+     "legendFormat": "{{namespace}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "pieType": "donut",
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "values": [
+      "value",
+      "percent"
+     ]
+    }
+   }
+  },
+  {
+   "id": 13,
+   "type": "piechart",
+   "title": "Cost by resource type",
+   "description": "",
+   "gridPos": {
+    "x": 18,
+    "y": 15,
+    "w": 6,
+    "h": 9
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum(namespace:cost_cpu_hourly:usd)",
+     "legendFormat": "CPU"
+    },
+    {
+     "refId": "B",
+     "expr": "sum(namespace:cost_ram_hourly:usd)",
+     "legendFormat": "Memory"
+    },
+    {
+     "refId": "C",
+     "expr": "sum(namespace:cost_gpu_hourly:usd) or vector(0)",
+     "legendFormat": "GPU"
+    },
+    {
+     "refId": "D",
+     "expr": "sum(namespace:cost_pv_hourly:usd) or vector(0)",
+     "legendFormat": "Storage"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "pieType": "donut",
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "values": [
+      "value",
+      "percent"
+     ]
+    }
+   }
+  },
+  {
+   "id": 14,
+   "type": "table",
+   "title": "Namespace cost table (now)",
+   "gridPos": {
+    "x": 0,
+    "y": 24,
+    "w": 24,
+    "h": 9
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "namespace:cost_hourly:usd",
+     "format": "table",
+     "instant": true,
+     "legendFormat": ""
+    },
+    {
+     "refId": "B",
+     "expr": "namespace:cost_hourly:usd * 730",
+     "format": "table",
+     "instant": true,
+     "legendFormat": ""
+    },
+    {
+     "refId": "C",
+     "expr": "namespace:cost_cpu_hourly:usd",
+     "format": "table",
+     "instant": true,
+     "legendFormat": ""
+    },
+    {
+     "refId": "D",
+     "expr": "namespace:cost_ram_hourly:usd",
+     "format": "table",
+     "instant": true,
+     "legendFormat": ""
+    },
+    {
+     "refId": "E",
+     "expr": "namespace:cost_gpu_hourly:usd",
+     "format": "table",
+     "instant": true,
+     "legendFormat": ""
+    },
+    {
+     "refId": "F",
+     "expr": "namespace:cost_pv_hourly:usd",
+     "format": "table",
+     "instant": true,
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 3
+    },
+    "overrides": []
+   },
+   "transformations": [
+    {
+     "id": "merge"
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Time": true
+      },
+      "renameByName": {
+       "Value #A": "$/hour",
+       "Value #B": "$/month (run-rate)",
+       "Value #C": "CPU $/h",
+       "Value #D": "RAM $/h",
+       "Value #E": "GPU $/h",
+       "Value #F": "Storage $/h"
+      }
+     }
+    },
+    {
+     "id": "sortBy",
+     "options": {
+      "sort": [
+       {
+        "field": "$/hour",
+        "desc": true
+       }
+      ]
+     }
+    }
+   ],
+   "options": {
+    "showHeader": true
+   }
+  },
+  {
+   "id": 15,
+   "type": "row",
+   "title": "Infrastructure \u2014 nodes, capacity type, GPUs",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 33,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 16,
+   "type": "timeseries",
+   "title": "Cost by Karpenter NodePool",
+   "description": "",
+   "gridPos": {
+    "x": 0,
+    "y": 34,
+    "w": 8,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "nodepool:cost_hourly:usd",
+     "legendFormat": "{{nodepool}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "custom": {
+      "fillOpacity": 25,
+      "stacking": {
+       "mode": "normal"
+      },
+      "drawStyle": "line",
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "bottom",
+     "calcs": [
+      "mean",
+      "max",
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 17,
+   "type": "timeseries",
+   "title": "Spot vs On-Demand",
+   "description": "",
+   "gridPos": {
+    "x": 8,
+    "y": 34,
+    "w": 8,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "capacity_type:cost_hourly:usd",
+     "legendFormat": "{{capacity_type}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "custom": {
+      "fillOpacity": 25,
+      "stacking": {
+       "mode": "normal"
+      },
+      "drawStyle": "line",
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "bottom",
+     "calcs": [
+      "mean",
+      "max",
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 18,
+   "type": "bargauge",
+   "title": "Cost by instance type",
+   "description": "",
+   "gridPos": {
+    "x": 16,
+    "y": 34,
+    "w": 8,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "topk(10, instance_type:cost_hourly:usd)",
+     "legendFormat": "{{instance_type}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "orientation": "horizontal",
+    "displayMode": "gradient"
+   }
+  },
+  {
+   "id": 19,
+   "type": "timeseries",
+   "title": "GPU spend: total vs unallocated",
+   "description": "",
+   "gridPos": {
+    "x": 0,
+    "y": 42,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "cluster:cost_gpu_hourly:usd",
+     "legendFormat": "GPU nodes"
+    },
+    {
+     "refId": "B",
+     "expr": "cluster:cost_gpu_unallocated_hourly:usd",
+     "legendFormat": "no pod requested it"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "custom": {
+      "fillOpacity": 10,
+      "stacking": {
+       "mode": "none"
+      },
+      "drawStyle": "line",
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "bottom",
+     "calcs": [
+      "mean",
+      "max",
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 20,
+   "type": "timeseries",
+   "title": "GPU utilisation vs allocation",
+   "description": "",
+   "gridPos": {
+    "x": 12,
+    "y": 42,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "avg(DCGM_FI_DEV_GPU_UTIL) / 100",
+     "legendFormat": "avg GPU util"
+    },
+    {
+     "refId": "B",
+     "expr": "sum(container_gpu_allocation) / clamp_min(sum(avg by (node) (node_gpu_count)), 1)",
+     "legendFormat": "GPUs allocated / GPUs provisioned"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "min": 0,
+     "max": 1,
+     "custom": {
+      "fillOpacity": 10,
+      "stacking": {
+       "mode": "none"
+      },
+      "drawStyle": "line",
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "bottom",
+     "calcs": [
+      "mean",
+      "max",
+      "lastNotNull"
+     ]
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   }
+  },
+  {
+   "id": 21,
+   "type": "row",
+   "title": "Unit economics",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 50,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 22,
+   "type": "stat",
+   "title": "Inference cost per 1k predictions",
+   "description": "",
+   "gridPos": {
+    "x": 0,
+    "y": 51,
+    "w": 6,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "ml:inference_cost_per_1k_predictions:usd",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 4
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "id": 23,
+   "type": "stat",
+   "title": "Training cost per pipeline run",
+   "description": "(ml-training + ray namespace cost over 1d) / pipeline runs in 1d. Ray is shared with notebooks, so this is an upper bound.",
+   "gridPos": {
+    "x": 6,
+    "y": 51,
+    "w": 6,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "ml:training_cost_per_run:usd",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 2
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "id": 24,
+   "type": "stat",
+   "title": "Cost per utilised GPU-hour",
+   "description": "GPU spend / GPU-hours actually busy. Lower is better; list price of a fully used A10G \u2248 $1.",
+   "gridPos": {
+    "x": 12,
+    "y": 51,
+    "w": 6,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "ml:gpu_cost_per_utilised_gpu_hour:usd",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 2
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "id": 25,
+   "type": "stat",
+   "title": "Notebook (JupyterHub) cost / active server",
+   "description": "",
+   "gridPos": {
+    "x": 18,
+    "y": 51,
+    "w": 6,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum(namespace:cost_hourly:usd{namespace=\"jupyterhub\"}) / clamp_min(jupyterhub_running_servers, 1)",
+     "legendFormat": ""
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 3
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "id": 26,
+   "type": "row",
+   "title": "AWS bill (CloudWatch AWS/Billing \u2014 account-wide source of truth)",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 57,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 27,
+   "type": "stat",
+   "title": "Month-to-date estimated charges",
+   "gridPos": {
+    "x": 0,
+    "y": 58,
+    "w": 6,
+    "h": 8
+   },
+   "datasource": {
+    "type": "cloudwatch",
+    "uid": "cloudwatch"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "namespace": "AWS/Billing",
+     "metricName": "EstimatedCharges",
+     "region": "us-east-1",
+     "dimensions": {
+      "Currency": "USD"
+     },
+     "statistic": "Maximum",
+     "period": "21600",
+     "matchExact": true,
+     "queryMode": "Metrics",
+     "metricQueryType": 0,
+     "metricEditorMode": 0,
+     "id": "",
+     "expression": "",
+     "label": "Month-to-date (AWS bill)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 2
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area"
+   },
+   "description": "From AWS/Billing EstimatedCharges (CloudWatch, us-east-1). Requires 'Receive Billing Alerts' enabled in Billing preferences. Account-wide, updated ~every 6h, resets monthly."
+  },
+  {
+   "id": 28,
+   "type": "bargauge",
+   "title": "Month-to-date by AWS service",
+   "gridPos": {
+    "x": 6,
+    "y": 58,
+    "w": 10,
+    "h": 8
+   },
+   "datasource": {
+    "type": "cloudwatch",
+    "uid": "cloudwatch"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "namespace": "AWS/Billing",
+     "metricName": "EstimatedCharges",
+     "region": "us-east-1",
+     "dimensions": {
+      "Currency": "USD",
+      "ServiceName": "*"
+     },
+     "statistic": "Maximum",
+     "period": "21600",
+     "matchExact": false,
+     "queryMode": "Metrics",
+     "metricQueryType": 0,
+     "metricEditorMode": 0,
+     "id": "",
+     "expression": "",
+     "label": "${PROP('Dim.ServiceName')}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 2
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "orientation": "horizontal",
+    "displayMode": "gradient"
+   },
+   "description": "From AWS/Billing EstimatedCharges (CloudWatch, us-east-1). Requires 'Receive Billing Alerts' enabled in Billing preferences. Account-wide, updated ~every 6h, resets monthly."
+  },
+  {
+   "id": 29,
+   "type": "timeseries",
+   "title": "Estimated charges trend",
+   "gridPos": {
+    "x": 16,
+    "y": 58,
+    "w": 8,
+    "h": 8
+   },
+   "datasource": {
+    "type": "cloudwatch",
+    "uid": "cloudwatch"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "namespace": "AWS/Billing",
+     "metricName": "EstimatedCharges",
+     "region": "us-east-1",
+     "dimensions": {
+      "Currency": "USD"
+     },
+     "statistic": "Maximum",
+     "period": "21600",
+     "matchExact": true,
+     "queryMode": "Metrics",
+     "metricQueryType": 0,
+     "metricEditorMode": 0,
+     "id": "",
+     "expression": "",
+     "label": "Month-to-date (AWS bill)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 2
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list"
+    }
+   },
+   "description": "From AWS/Billing EstimatedCharges (CloudWatch, us-east-1). Requires 'Receive Billing Alerts' enabled in Billing preferences. Account-wide, updated ~every 6h, resets monthly."
+  }
+ ],
+ "editable": true,
+ "graphTooltip": 1,
+ "links": [
+  {
+   "title": "ML Platform dashboards",
+   "type": "dashboards",
+   "tags": [
+    "ml"
+   ],
+   "asDropdown": true
+  }
+ ]
+}

@@ -1,0 +1,78 @@
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: {{ .Values.name }}
+spec:
+  version: {{ .Values.version }}
+  auth:
+    fileRealm:
+      - secretName: es-grafana-user   # read-only user for the Grafana datasource
+  nodeSets:
+    - name: default
+      count: {{ .Values.elasticsearch.count }}
+      config:
+        node.store.allow_mmap: false   # no vm.max_map_count tuning needed on nodes
+      podTemplate:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: ml-platform
+        spec:
+          nodeSelector:
+            {{- toYaml .Values.nodeSelector | nindent 12 }}
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: {{ .Values.elasticsearch.javaOpts | quote }}
+              resources:
+                {{- toYaml .Values.elasticsearch.resources | nindent 16 }}
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  elasticsearch.k8s.elastic.co/cluster-name: {{ .Values.name }}
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: {{ .Values.elasticsearch.storageClass }}
+            resources:
+              requests:
+                storage: {{ .Values.elasticsearch.storage }}
+---
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: {{ .Values.name }}
+spec:
+  version: {{ .Values.version }}
+  count: {{ .Values.kibana.count }}
+  elasticsearchRef:
+    name: {{ .Values.name }}
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true   # TLS terminates at ALB / port-forward
+  podTemplate:
+    spec:
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      containers:
+        - name: kibana
+          resources:
+            {{- toYaml .Values.kibana.resources | nindent 12 }}
+---
+{{- if ge (int .Values.elasticsearch.count) 2 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Values.name }}-es
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      elasticsearch.k8s.elastic.co/cluster-name: {{ .Values.name }}
+{{- end }}

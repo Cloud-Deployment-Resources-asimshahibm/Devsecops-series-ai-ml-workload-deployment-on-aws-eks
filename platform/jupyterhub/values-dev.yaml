@@ -1,0 +1,19 @@
+# Dev: reach the hub with
+#   kubectl -n jupyterhub port-forward svc/proxy-public 8000:80
+# and register the GitHub OAuth app with callback http://localhost:8000/hub/oauth_callback
+hub:
+  config:
+    GitHubOAuthenticator:
+      oauth_callback_url: http://localhost:8000/hub/oauth_callback
+
+# To expose through the ALB instead, set a host + ACM certificate:
+# ingress:
+#   enabled: true
+#   ingressClassName: alb
+#   hosts: [jupyter.dev.example.com]
+#   annotations:
+#     alb.ingress.kubernetes.io/scheme: internet-facing
+#     alb.ingress.kubernetes.io/target-type: ip
+#     alb.ingress.kubernetes.io/group.name: aiml-dev
+#     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+#     alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:__AWS_ACCOUNT_ID__:certificate/xxxx

@@ -1,0 +1,17 @@
+clusterName: aiml-dev
+nodeRole: aiml-dev-karpenter-node
+kmsKeyAlias: alias/aiml-dev-platform
+
+costTags:
+  Project: aiml
+  Environment: dev
+
+cpu:
+  capacityTypes: ["spot", "on-demand"]   # Spot first in dev
+  limits:
+    cpu: "64"
+    memory: 256Gi
+
+gpu:
+  limits:
+    nvidia.com/gpu: "2"

@@ -1,0 +1,7 @@
+elasticsearch:
+  count: 3
+  storage: 200Gi
+  retentionDays: 30
+
+kibana:
+  count: 2
