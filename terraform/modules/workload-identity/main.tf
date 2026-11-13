@@ -10,6 +10,7 @@
 #  argo-workflows     argo:argo-workflows-server, argo:argo-workflow      artifacts rw
 #  loki               monitoring:loki                                     loki bucket rw
 #  grafana            monitoring:kube-prometheus-stack-grafana            CloudWatch read (billing, ALB, RDS)
+#  image-verifier     kyverno:kyverno-admission-controller, trivy-system  ECR read (cosign signatures, image scans)
 #  external-secrets   external-secrets:external-secrets                   secretsmanager <name>/* ro
 ################################################################################
 
@@ -78,6 +79,18 @@ locals {
             "ec2:DescribeTags", "ec2:DescribeInstances", "ec2:DescribeRegions", "tag:GetResources",
           ]
           resources = ["*"]
+        },
+      ]
+    }
+    # Kyverno verifies cosign signatures stored next to images in ECR;
+    # Trivy Operator pulls image manifests/layers to scan running workloads.
+    image-verifier = {
+      sas = ["kyverno:kyverno-admission-controller", "trivy-system:trivy-operator"]
+      statements = [
+        { actions = ["ecr:GetAuthorizationToken"], resources = ["*"] },
+        {
+          actions   = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability", "ecr:DescribeImages", "ecr:ListImages"]
+          resources = ["arn:aws:ecr:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:repository/*"]
         },
       ]
     }

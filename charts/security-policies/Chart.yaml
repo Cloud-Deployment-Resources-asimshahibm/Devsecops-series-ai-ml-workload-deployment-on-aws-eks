@@ -1,0 +1,10 @@
+apiVersion: v2
+name: security-policies
+description: >-
+  Kubernetes guardrails for the ML platform: Kyverno admission policies
+  (cosign signature verification + digest pinning, trusted registries,
+  Pod Security, resource limits, no :latest, no host access) and
+  default-deny NetworkPolicies for the ML namespaces.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

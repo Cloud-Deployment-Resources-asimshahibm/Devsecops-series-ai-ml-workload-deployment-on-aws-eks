@@ -1,50 +1,118 @@
-name: Promote to prod
+name: Promote to prod (verified)
 
-# Opens a PR that copies the image tags currently running in dev into the prod
-# values files. Merging the PR (after review) is the deployment: Argo CD in the
-# prod cluster syncs it. Rollback = revert the PR.
+# Release gate for production. Promotes the exact DIGESTS running in dev only if:
+#   1. each digest carries a valid cosign signature from our build workflow
+#   2. each digest has a valid SLSA provenance attestation built from this repo
+#   3. a fresh Trivy scan (today's CVE database) finds no fixable HIGH/CRITICAL
+#   4. the latest DAST run against dev passed
+# Then opens a PR that changes values-prod.yaml; merging (with CODEOWNERS review)
+# deploys via Argo CD inside the prod change window.
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Image tag to promote (empty = whatever dev runs now)"
-        required: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/build-and-deploy.yml@refs/heads/main
+  CERT_ISSUER: https://token.actions.githubusercontent.com
 
 jobs:
-  promote:
+  verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: read
+      actions: read
+    outputs:
+      tag: ${{ steps.read.outputs.tag }}
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: read
+        name: Read what dev runs
+        run: |
+          {
+            echo "tag=$(yq '.image.tag' charts/ml-inference/values-dev.yaml)"
+            echo "inference=$(yq '.image.repository + "@" + .image.digest' charts/ml-inference/values-dev.yaml)"
+            echo "training=$(yq '.images.training.repository + "@" + .images.training.digest' charts/ml-pipelines/values-dev.yaml)"
+            echo "ray=$(yq '.image.repository + "@" + .image.digest' charts/ray-cluster/values-dev.yaml)"
+          } >> "$GITHUB_OUTPUT"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_CI }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+      - name: "Gate: signatures + SLSA provenance"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGES: ${{ steps.read.outputs.inference }} ${{ steps.read.outputs.training }} ${{ steps.read.outputs.ray }}
+        run: |
+          set -euo pipefail
+          for img in $IMAGES; do
+            echo "::group::$img"
+            [[ "$img" == *"@sha256:"* ]] || { echo "::error::$img is not pinned by digest"; exit 1; }
+            cosign verify --certificate-identity "$CERT_IDENTITY" --certificate-oidc-issuer "$CERT_ISSUER" "$img" > /dev/null
+            gh attestation verify "oci://$img" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-and-deploy.yml"
+            echo "::endgroup::"
+          done
+      - name: "Gate: fresh vulnerability scan of each digest"
+        env:
+          IMAGES: ${{ steps.read.outputs.inference }} ${{ steps.read.outputs.training }} ${{ steps.read.outputs.ray }}
+        run: |
+          curl -sSL https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz | tar xz trivy
+          for img in $IMAGES; do
+            ./trivy image --ignore-unfixed --severity HIGH,CRITICAL --ignorefile .trivyignore --exit-code 1 "$img"
+          done
+      - name: "Gate: last DAST run on dev succeeded"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=$(gh run list --workflow dast.yml --branch main --limit 1 --json conclusion --jq '.[0].conclusion')
+          echo "last DAST: $status"
+          [ "$status" = "success" ]
+
+  open-pr:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - name: Resolve tag
-        id: tag
+        with:
+          persist-credentials: false   # create-pull-request pushes with its own token
+      - name: Copy verified tags + digests to prod values
         run: |
-          TAG="${{ github.event.inputs.tag }}"
-          [ -z "$TAG" ] && TAG=$(yq '.image.tag' charts/ml-inference/values-dev.yaml)
-          if [ "$TAG" = "bootstrap" ]; then echo "::error::dev has no built image yet"; exit 1; fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-      - name: Update prod values
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          yq -i '.image.tag = strenv(TAG)' charts/ml-inference/values-prod.yaml
-          yq -i '.images.training.tag = strenv(TAG) | .images.ray.tag = strenv(TAG)' charts/ml-pipelines/values-prod.yaml
-          yq -i '.image.tag = strenv(TAG)' charts/ray-cluster/values-prod.yaml
+          yq -i ".image.tag = \"$(yq '.image.tag' charts/ml-inference/values-dev.yaml)\" | .image.digest = \"$(yq '.image.digest' charts/ml-inference/values-dev.yaml)\"" charts/ml-inference/values-prod.yaml
+          yq -i ".images = (load(\"charts/ml-pipelines/values-dev.yaml\").images)" charts/ml-pipelines/values-prod.yaml
+          yq -i ".image.tag = \"$(yq '.image.tag' charts/ray-cluster/values-dev.yaml)\" | .image.digest = \"$(yq '.image.digest' charts/ray-cluster/values-dev.yaml)\"" charts/ray-cluster/values-prod.yaml
       - uses: peter-evans/create-pull-request@v7
         with:
-          branch: promote/prod-${{ steps.tag.outputs.tag }}
-          title: "deploy(prod): ml images ${{ steps.tag.outputs.tag }}"
-          commit-message: "deploy(prod): ml images ${{ steps.tag.outputs.tag }}"
-          labels: deploy-prod
+          branch: promote/prod-${{ needs.verify.outputs.tag }}
+          title: "deploy(prod): verified ml images ${{ needs.verify.outputs.tag }}"
+          commit-message: "deploy(prod): verified ml images ${{ needs.verify.outputs.tag }}"
+          labels: deploy-prod, security-verified
           body: |
-            Promotes image tag `${{ steps.tag.outputs.tag }}` (verified in dev) to **prod**.
+            Promotes the **digests** running in dev to **prod**. Automated gates passed:
 
-            Checklist before merging:
-            - [ ] dev smoke test green (`scripts/smoke-test.sh dev`)
-            - [ ] Grafana "ML Inference" dashboard in dev: error ratio < 1%, p95 within SLO
-            - [ ] Training pipeline in dev succeeded with this tag
+            - [x] cosign signature from `build-and-deploy.yml@refs/heads/main` (Sigstore keyless)
+            - [x] SLSA build provenance attestation (`gh attestation verify`)
+            - [x] fresh Trivy scan: no fixable HIGH/CRITICAL
+            - [x] latest DAST (OWASP ZAP) on dev passed
 
-            Merging deploys via Argo CD. Rollback: revert this PR.
+            Reviewer checklist:
+            - [ ] Grafana *Security Posture* (dev): no Falco criticals, no policy failures in ML namespaces
+            - [ ] SLO dashboard (dev): error budget healthy
+            - [ ] Change ticket / approval recorded
+
+            Merging deploys via Argo CD (prod sync window applies). Rollback: revert this PR.

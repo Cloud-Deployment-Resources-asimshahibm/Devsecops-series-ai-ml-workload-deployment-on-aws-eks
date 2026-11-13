@@ -1,0 +1,6 @@
+failure-threshold: warning
+ignored:
+  - DL3008   # apt pin: no apt installs in our images
+trustedRegistries:
+  - docker.io
+  - public.ecr.aws

@@ -1,6 +1,6 @@
 """Online inference API (FastAPI).
 
-Endpoints
+Endpoints (/v1/* require an X-API-Key header when API keys are configured)
   POST /v1/predict    {"instances": [[5.1, 3.5, 1.4, 0.2], ...]}
   GET  /v1/models     currently served model + metadata
   GET  /healthz       liveness
@@ -11,6 +11,7 @@ Endpoints
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -21,11 +22,11 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
 from pydantic import BaseModel, Field, field_validator
 
-from app.model import ModelManager
+from app.model import IntegrityError, ModelManager
 
 # ----------------------------------------------------------------- settings
 MODEL_NAME = os.getenv("MODEL_NAME", "iris-classifier")
@@ -38,7 +39,20 @@ def settings() -> dict:
         "store": os.getenv("MODEL_STORE_URI", "./artifacts/models"),
         "version": os.getenv("MODEL_VERSION", "latest"),
         "refresh": int(os.getenv("MODEL_REFRESH_SECONDS", "60")),
+        "require_scan": os.getenv("REQUIRE_MODEL_SCAN", "true").lower() == "true",
     }
+
+
+def api_keys() -> list[str]:
+    """Keys come from a mounted Secret file (API_KEYS_FILE, one key per line; synced from
+    Secrets Manager by External Secrets) or API_KEYS (comma separated). Empty = auth disabled."""
+    keys: list[str] = []
+    path = os.getenv("API_KEYS_FILE")
+    if path and os.path.exists(path):
+        with open(path) as fh:
+            keys += [line.strip() for line in fh if line.strip()]
+    keys += [k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()]
+    return keys
 
 
 # ----------------------------------------------------------------- logging
@@ -87,6 +101,10 @@ MODEL_INFO = Gauge("mlserve_model_info", "Currently served model (value=1)", ["m
 MODEL_LOADED = Gauge("mlserve_model_loaded", "1 if a model is loaded")
 MODEL_RELOADS = Counter("mlserve_model_reloads_total", "Successful model (re)loads", ["model"])
 MODEL_LOAD_FAILURES = Counter("mlserve_model_load_failures_total", "Failed model load attempts", ["model"])
+MODEL_INTEGRITY_FAILURES = Counter(
+    "mlserve_model_integrity_failures_total", "Model artifacts rejected (digest mismatch / not scanned)", ["model"]
+)
+AUTH_FAILURES = Counter("mlserve_auth_failures_total", "Requests rejected for a missing or invalid API key")
 
 manager: ModelManager = ModelManager("./artifacts/models", MODEL_NAME)  # replaced in lifespan
 
@@ -108,6 +126,10 @@ def _try_refresh() -> None:
                 previous=previous,
                 metrics=current.metadata.get("metrics"),
             )
+    except IntegrityError as exc:
+        MODEL_LOAD_FAILURES.labels(MODEL_NAME).inc()
+        MODEL_INTEGRITY_FAILURES.labels(MODEL_NAME).inc()
+        event("model rejected by integrity check", logging.ERROR, model=MODEL_NAME, error=str(exc), security=True)
     except Exception as exc:
         MODEL_LOAD_FAILURES.labels(MODEL_NAME).inc()
         event("model load failed", logging.WARNING, model=MODEL_NAME, error=str(exc), store=manager.store.uri)
@@ -124,16 +146,32 @@ async def _refresher(refresh_seconds: int) -> None:
 async def lifespan(_: FastAPI):
     global manager
     cfg = settings()
-    manager = ModelManager(cfg["store"], MODEL_NAME, cfg["version"])
+    manager = ModelManager(cfg["store"], MODEL_NAME, cfg["version"], cfg["require_scan"])
+    app.state.api_keys = api_keys()
     MODEL_LOADED.set(0)
-    event("starting", model=MODEL_NAME, store=cfg["store"], pinned_version=cfg["version"])
+    event(
+        "starting",
+        model=MODEL_NAME,
+        store=cfg["store"],
+        pinned_version=cfg["version"],
+        require_scan=cfg["require_scan"],
+        auth_enabled=bool(app.state.api_keys),
+    )
     await asyncio.to_thread(_try_refresh)
     task = asyncio.create_task(_refresher(cfg["refresh"]))
     yield
     task.cancel()
 
 
-app = FastAPI(title="ml-inference", version="1.0.0", lifespan=lifespan)
+_docs = os.getenv("ENABLE_DOCS", "true").lower() == "true"
+app = FastAPI(
+    title="ml-inference",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs" if _docs else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if _docs else None,
+)
 app.mount("/metrics", make_asgi_app())
 
 
@@ -147,6 +185,13 @@ async def observe(request: Request, call_next):
         response = await call_next(request)
         status = response.status_code
         response.headers["x-request-id"] = request_id
+        # security headers (OWASP secure headers)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
+        if not route.startswith("/docs"):
+            response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
         return response
     finally:
         elapsed = time.perf_counter() - start
@@ -192,6 +237,17 @@ class PredictResponse(BaseModel):
     predictions: list[Prediction]
 
 
+# ----------------------------------------------------------------- auth
+def require_api_key(request: Request) -> None:
+    keys: list[str] = getattr(request.app.state, "api_keys", [])
+    if not keys:
+        return
+    supplied = request.headers.get("x-api-key", "")
+    if not any(hmac.compare_digest(supplied, k) for k in keys):
+        AUTH_FAILURES.inc()
+        raise HTTPException(status_code=401, detail="invalid or missing API key", headers={"WWW-Authenticate": "ApiKey"})
+
+
 # ----------------------------------------------------------------- routes
 @app.get("/healthz")
 def healthz() -> dict:
@@ -205,7 +261,7 @@ def readyz() -> dict:
     return {"status": "ready", "model_version": manager.current.version}
 
 
-@app.get("/v1/models")
+@app.get("/v1/models", dependencies=[Depends(require_api_key)])
 def models() -> dict:
     current = manager.current
     if current is None:
@@ -213,7 +269,7 @@ def models() -> dict:
     return {"name": current.name, "version": current.version, "metadata": current.metadata}
 
 
-@app.post("/v1/predict", response_model=PredictResponse)
+@app.post("/v1/predict", response_model=PredictResponse, dependencies=[Depends(require_api_key)])
 def predict(req: PredictRequest) -> PredictResponse:
     current = manager.current
     if current is None:

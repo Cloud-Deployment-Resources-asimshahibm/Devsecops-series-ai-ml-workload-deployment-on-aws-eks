@@ -1,7 +1,9 @@
 import json
 
 from mlstore import ModelStore
-from trainer import promote, train, validate_data
+from trainer import promote, scan_model, train, validate_data
+
+CLEAN = lambda path: {"issues": [], "errors": [], "exit_code": 0}  # noqa: E731
 
 
 def test_validate_data_passes_on_iris():
@@ -39,6 +41,7 @@ def test_promote_and_rollback(tmp_path):
         vf = tmp_path / f"v{i}"
         assert train.main(["--model-store", store_uri, "--version-file", str(vf), "--n-estimators", "50"]) == 0
         versions.append(vf.read_text())
+        assert scan_model.run(ModelStore(store_uri), "iris-classifier", versions[-1], CLEAN)[0] == 0
         assert promote.main(["--model-store", store_uri, "--version", versions[-1]]) == 0
 
     store = ModelStore(store_uri)

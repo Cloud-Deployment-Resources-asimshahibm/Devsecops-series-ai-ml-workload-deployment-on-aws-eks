@@ -2,13 +2,13 @@
 # Build context: ./ml   (docker build -f ml/inference/Dockerfile ml)
 
 # ---------- build stage: compile wheels once ----------
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim-bookworm AS builder
 ENV PIP_NO_CACHE_DIR=1
 COPY inference/requirements.txt /tmp/requirements.txt
-RUN pip install --upgrade pip && pip wheel --wheel-dir /wheels -r /tmp/requirements.txt
+RUN pip install "pip==24.3.1" && pip wheel --wheel-dir /wheels -r /tmp/requirements.txt
 
 # ---------- runtime stage ----------
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
@@ -25,7 +25,7 @@ USER 1000
 
 ARG GIT_SHA=local
 ENV GIT_SHA=${GIT_SHA}
-LABEL org.opencontainers.image.source="https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS" \
+LABEL org.opencontainers.image.source="https://github.com/Cloud-Deployment-Resources-asimshahibm/DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS" \
       org.opencontainers.image.revision="${GIT_SHA}"
 
 EXPOSE 8080

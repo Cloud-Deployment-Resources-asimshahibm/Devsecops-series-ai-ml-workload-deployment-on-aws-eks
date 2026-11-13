@@ -1,12 +1,30 @@
-{{- range list "monitoring" "argo" "jupyterhub" "ray" "ml-training" "ml-serving" "logging" }}
+{{- /*
+Pod Security Admission per namespace:
+  restricted  — ml-serving (fully hardened FastAPI pods)
+  baseline    — training / Ray / notebooks (warn+audit at restricted to surface drift)
+  privileged  — DaemonSets that need host access (logging, falco, gpu-operator) are not listed here
+*/ -}}
+{{- $psa := dict
+  "ml-serving" "restricted"
+  "ml-training" "baseline"
+  "ray" "baseline"
+  "jupyterhub" "baseline"
+  "argo" "baseline"
+  "monitoring" "privileged"
+  "logging" "privileged"
+-}}
+{{- range $ns, $level := $psa }}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ . }}
+  name: {{ $ns }}
   labels:
     app.kubernetes.io/part-of: ml-platform
-    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/enforce: {{ $level }}
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
   annotations:
     argocd.argoproj.io/sync-wave: "-10"
     argocd.argoproj.io/sync-options: Delete=false

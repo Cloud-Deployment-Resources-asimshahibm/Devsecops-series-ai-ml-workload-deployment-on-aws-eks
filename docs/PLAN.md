@@ -1,4 +1,4 @@
-# High-Level Plan — AI/ML Workload Platform on EKS
+# High-Level Plan — AI/ML Workload Platform on EKS (DevSecOps edition)
 
 ## 1. Objective
 
@@ -63,16 +63,22 @@ Detailed view:
 ## 3. Delivery flow
 
 ```
- PR ──► ci.yml (ruff, pytest, tf validate/tflint, helm lint + kubeconform, checkov, trivy)
-   └──► terraform.yml  plan dev+prod → PR comment
-merge ─► terraform.yml  apply dev (prod: manual dispatch + Environment approval)
-     └► build-and-deploy.yml  build 3 images → Trivy (CRITICAL fails) → ECR (+SBOM, provenance)
-                              → commit new tag to charts/*/values-dev.yaml
-                              → Argo CD (dev) syncs  ml-inference · ml-pipelines · ray-cluster
+ PR ──► ci.yml        secrets(gitleaks) · SAST(Semgrep+Bandit) · SCA(pip-audit+OSV, dependency review)
+   │                  IaC(Checkov+Trivy) · Kyverno CLI on rendered charts · zizmor+actionlint · hadolint
+   │                  unit + model-security tests · tf validate/tflint · conftest verify · helm lint + kubeconform
+   ├──► codeql.yml    CodeQL (Python, Actions)
+   └──► terraform.yml plan dev+prod → OPA/Conftest + Checkov on the plan JSON → PR comment
+merge ─► terraform.yml  apply dev (prod: manual dispatch + Environment approval; plan re-checked by OPA)
+     └► build-and-deploy.yml  build (local) → Trivy + Grype gates → push → SBOM → cosign sign
+                              → SBOM attestation + SLSA provenance → verify → pin tag+DIGEST in values-dev.yaml
+                              → Argo CD (dev) syncs → Kyverno verifies signature at admission
+                              → dast.yml: OWASP ZAP against dev
 run-training-pipeline.yml / nightly CronWorkflow
-     → Argo Workflow: validate-data → Ray Tune (RayJob) → train → quality gate → [approval] → promote
-     → S3 models/<name>/latest.json updated → inference replicas hot-reload (no redeploy)
-promote-prod.yml → PR copying tags to values-prod.yaml → review + merge → Argo CD (prod) syncs
+     → Argo Workflow: validate-data → Ray Tune (RayJob) → train (sha256) → quality gate
+                      → model-security-scan (ModelScan) → [approval] → promote (requires passing scan)
+     → S3 models/<name>/latest.json updated → inference re-verifies digest + scan, then hot-reloads
+promote-prod.yml → verify signatures + provenance + fresh Trivy + last DAST → PR copying DIGESTS
+                   to values-prod.yaml → CODEOWNERS review + merge → Argo CD (prod) syncs in change window
 ```
 
 **Rollback paths**
@@ -84,14 +90,29 @@ promote-prod.yml → PR copying tags to values-prod.yaml → review + merge → 
 | Bad infra change | `git revert` → `terraform.yml` plan/apply |
 | Platform component upgrade | revert chart version bump in `argocd/app-of-apps/values.yaml` |
 
-## 4. Security model
+## 4. Security model (DevSecOps)
+
+Security is a gate at **every stage**. The full matrix is in [DEVSECOPS.md](DEVSECOPS.md).
+
+| Stage | Controls |
+|---|---|
+| Plan | OPA/Conftest + Checkov on the Terraform plan; encrypted, CMK-protected, locked state |
+| Code | gitleaks, Semgrep (+ ML rules), Bandit, CodeQL, pip-audit, OSV, dependency review, Checkov, Trivy config, Kyverno CLI, zizmor, actionlint |
+| Build | hadolint; Trivy + Grype must pass **before** push; non-root slim images; hardened runners |
+| Test | model-security unit tests; ModelScan + SHA-256 in the pipeline; ZAP DAST on dev |
+| Release | SBOM, cosign keyless signature, SBOM attestation, SLSA provenance, verification before CD and before prod |
+| Deploy | Kyverno (signatures, digests, registries, pod security, limits, host access), PSA, NetworkPolicies, Argo CD projects + sync windows, WAF, API keys |
+| Operate | Falco, Trivy Operator, model re-verification on load, GuardDuty (EKS Runtime), Security Hub, Inspector, Config, CloudTrail data events, Access Analyzer, Macie |
+| Monitor | Security Posture dashboard, security alerts with playbooks, authorized-traffic SLO, remediation SLAs |
+
+Baseline principles:
 
 - **No long-lived credentials**: GitHub → AWS via OIDC; pods → AWS via IRSA / Pod Identity; humans via SSO roles mapped with EKS access entries.
-- **Least privilege**: CI can push to 3 ECR repos and *only* create Workflows in `ml-training`; inference can only *read* `models/`; Loki only its bucket; External Secrets only `aiml-<env>/*`.
-- **Encryption everywhere** with one CMK per env (rotation on); S3 buckets deny non-TLS; RDS forces SSL.
-- **Network**: nodes and RDS in private subnets, no public IPs; AWS APIs via VPC endpoints; ALB is the only ingress; EKS API CIDR allow-list.
-- **Supply chain**: immutable ECR tags, Trivy gate, SBOM + provenance attestations, Checkov on IaC, gitleaks pre-commit.
-- **Runtime**: non-root containers, read-only root FS, dropped capabilities, seccomp RuntimeDefault, IMDSv2 hop-limit 1, JupyterHub NetworkPolicy.
+- **Least privilege**: CI can push to 3 ECR repos and *only* create Workflows in `ml-training`; inference can only *read* `models/`; Loki only its bucket; External Secrets only `aiml-<env>/*`; Kyverno and Trivy Operator get ECR read only. Workflows use per-job `permissions`.
+- **Encryption everywhere** with one CMK per env (rotation on), plus a CMK for Terraform state. S3 buckets deny non-TLS; RDS forces SSL.
+- **Network**: nodes and RDS in private subnets, no public IPs; AWS APIs via VPC endpoints; the ALB (behind WAF) is the only ingress; default-deny NetworkPolicies; EKS API CIDR allow-list (policy-enforced for prod).
+- **Supply chain**: immutable ECR tags, digests pinned in Git, signed and attested images, admission-time verification, SLSA provenance checked before prod.
+- **Runtime**: non-root containers, read-only root FS, dropped capabilities, seccomp RuntimeDefault, no service-account token where not needed, IMDSv2 hop-limit 1, Falco detection.
 
 ## 5. Observability model
 
@@ -124,7 +145,9 @@ Other alerts shipped: 5xx ratio < 5 % (critical), p95 latency < 500 ms (warning)
 | M5 | Observability | dashboards populated (incl. Cost & Billing, Performance, SLO), test alert reaches receiver, logs searchable in Loki + Kibana, budgets created | 0.5 day |
 | M6 | Users | JupyterHub GitHub login, CPU + GPU notebook launch, Ray from notebook | 0.5 day |
 | M7 | prod | prod stack applied with approval, promote PR merged, smoke test green | 1 day |
-| M8 | Hardening | DNS + ACM + WAF, API CIDR lock-down, Alertmanager receivers, AMI pin, backups tested | 1–2 days |
+| M3S | 🔐 Security setup | code-security features + branch protection with all gates required; first build signed + attested; `cosign verify` and `gh attestation verify` pass | 0.5 day |
+| M5S | 🔐 Security validation | Kyverno rejects unsigned/`latest`/root pods; Falco + integrity alerts fire on demand; WAF attached; DAST green; Security Hub + GuardDuty Runtime active | 0.5 day |
+| M8 | Hardening | DNS + ACM, API CIDR lock-down (required by OPA for prod), Alertmanager receivers, AMI pin, backups tested, harden-runner `egress-policy: block` | 1–2 days |
 
 ## 7. Cost guide (us-east-1, on-demand list prices, rounded)
 
@@ -149,4 +172,8 @@ Other alerts shipped: 5xx ratio < 5 % (critical), p95 latency < 500 ms (warning)
 | Chart upgrades breaking CRDs | pinned versions, ServerSideApply, upgrade in dev first via PR |
 | Model/library skew | identical sklearn/joblib pins in training + inference; versioned metadata |
 | Cost runaway | NodePool limits, JupyterHub culling, GPU consolidation, GPU-idle + unallocated-GPU alerts, projection-over-budget alert, AWS Budgets + Anomaly Detection |
-| Secrets leakage | ESO + Secrets Manager only; gitleaks; no secrets in values files |
+| Secrets leakage | ESO + Secrets Manager only; gitleaks on full history + GitHub push protection; Trivy secret scan in images; no secrets in values files |
+| Malicious / tampered model | ModelScan + SHA-256 in pipeline; promotion requires passing scan; re-verification on load; CloudTrail data events on the bucket |
+| Compromised dependency or image | pinned deps, pip-audit/OSV/Dependabot, two image scanners, signatures + provenance verified at admission and before prod |
+| Policy blocks a legitimate deploy | same Kyverno policies run in CI first; documented exceptions process (DEVSECOPS.md §5); Audit mode for `resourceLimits` in dev |
+| Security tooling noise / alert fatigue | blocking only on fixable HIGH/CRITICAL; severity-based routing; time-boxed ignores with owners |

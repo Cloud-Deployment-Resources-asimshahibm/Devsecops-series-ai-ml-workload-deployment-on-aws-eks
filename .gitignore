@@ -37,3 +37,4 @@ charts/*/Chart.lock
 *.key
 .env
 kubeconfig*
+rendered/

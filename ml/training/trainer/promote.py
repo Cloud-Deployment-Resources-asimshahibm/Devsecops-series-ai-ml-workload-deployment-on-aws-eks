@@ -24,6 +24,12 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--version")
     group.add_argument("--rollback", action="store_true")
     p.add_argument("--force", action="store_true", help="promote even if the quality gate failed")
+    p.add_argument(
+        "--require-scan",
+        action=argparse.BooleanOptionalAction,
+        default=os.getenv("REQUIRE_MODEL_SCAN", "true").lower() == "true",
+        help="require a passing security.json (ModelScan) whose sha256 matches the artifact (default: on)",
+    )
     args = p.parse_args(argv)
 
     store = ModelStore(args.model_store)
@@ -42,6 +48,14 @@ def main(argv: list[str] | None = None) -> int:
     if not meta.get("gate_passed") and not args.force:
         log_event(log, "refusing to promote: quality gate failed", version=args.version, metrics=meta.get("metrics"))
         return 2
+    if args.require_scan:
+        if not store.exists(args.model_name, args.version, "security.json"):
+            log_event(log, "refusing to promote: model has not been security-scanned", version=args.version)
+            return 3
+        sec = store.get_json(args.model_name, args.version, "security.json")
+        if not sec.get("passed") or sec.get("sha256") != meta.get("artifact_sha256"):
+            log_event(log, "refusing to promote: security scan failed or digest mismatch", version=args.version, scan=sec)
+            return 3
     pointer = store.promote(args.model_name, args.version)
     log_event(log, "model promoted", **pointer, metrics=meta.get("metrics"))
     return 0

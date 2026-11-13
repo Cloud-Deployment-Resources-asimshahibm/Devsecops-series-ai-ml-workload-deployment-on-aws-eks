@@ -30,13 +30,74 @@ resource "aws_s3_bucket_versioning" "tfstate" {
   }
 }
 
+# Customer-managed key for Terraform state (state contains generated passwords)
+resource "aws_kms_key" "tfstate" {
+  description             = "${var.project} Terraform state"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  policy                  = data.aws_iam_policy_document.tfstate_kms.json
+}
+
+# Key admin stays with the account (IAM decides who); use only through S3 in this account.
+data "aws_iam_policy_document" "tfstate_kms" {
+  # In a key policy "Resource: *" means "this key" only
+  #checkov:skip=CKV_AWS_111:key policy - resource is the key itself
+  #checkov:skip=CKV_AWS_356:key policy - resource is the key itself
+  #checkov:skip=CKV_AWS_109:key policy - account root administration is the AWS-recommended default
+  statement {
+    sid       = "AccountAdministration"
+    actions   = ["kms:*"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${local.account_id}:root"]
+    }
+  }
+  statement {
+    sid       = "UseOnlyViaS3"
+    effect    = "Deny"
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey*", "kms:Encrypt", "kms:ReEncrypt*"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "StringNotEquals"
+      variable = "kms:ViaService"
+      values   = ["s3.${var.region}.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_kms_alias" "tfstate" {
+  name          = "alias/${var.project}-tfstate"
+  target_key_id = aws_kms_key.tfstate.key_id
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
   bucket = aws_s3_bucket.tfstate.id
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.tfstate.arn
     }
     bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+  rule {
+    id     = "expire-old-state-versions"
+    status = "Enabled"
+    filter {}
+    noncurrent_version_expiration {
+      noncurrent_days = 180
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
   }
 }
 
@@ -94,6 +155,7 @@ module "github_oidc" {
   github_repo        = var.github_repo
   environments       = var.environments
   state_bucket_arn   = aws_s3_bucket.tfstate.arn
+  state_kms_key_arn  = aws_kms_key.tfstate.arn
   ecr_repository_arn = values(module.ecr.repository_arns)
 }
 
@@ -138,4 +200,13 @@ resource "aws_ce_anomaly_subscription" "services" {
       values        = [tostring(var.anomaly_threshold_usd)]
     }
   }
+}
+
+# ------------------------------------------------------------------------------
+# DevSecOps: account-level security baseline (detect · posture · audit · data)
+# ------------------------------------------------------------------------------
+module "security_baseline" {
+  source  = "../modules/security-baseline"
+  project = var.project
+  enable  = var.security_services
 }

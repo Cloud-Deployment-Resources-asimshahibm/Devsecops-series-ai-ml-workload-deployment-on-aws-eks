@@ -2,6 +2,21 @@ crds:
   install: true
   keep: true
 
+# Argo executor sidecars (init/wait) run hardened so ML pods pass Kyverno + PSA
+executor:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
 workflow:
   serviceAccount:
     create: true

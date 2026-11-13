@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pickle
 import sys
 import tempfile
 import uuid
@@ -13,7 +14,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import joblib
 import sklearn
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score
@@ -21,7 +21,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from mlstore import ModelStore, read_json_uri
+from mlstore import ModelStore, read_json_uri, sha256_file
 from trainer.data import Dataset, load_dataset
 from trainer.logutil import get_logger, log_event
 
@@ -113,9 +113,13 @@ def main(argv: list[str] | None = None) -> int:
 
     store = ModelStore(args.model_store)
     with tempfile.TemporaryDirectory() as tmp:
-        model_path = Path(tmp) / "model.joblib"
-        joblib.dump(model, model_path)
-        uri = store.put_file(model_path, args.model_name, version, "model.joblib")
+        model_path = Path(tmp) / "model.pkl"
+        # plain pickle (protocol 5) instead of joblib.dump: joblib's raw numpy blocks cannot be
+        # parsed by ModelScan, and an artifact we cannot scan is an artifact we cannot trust.
+        with open(model_path, "wb") as fh:
+            pickle.dump(model, fh, protocol=5)
+        metadata["artifact_sha256"] = sha256_file(model_path)  # verified by scan, promote and inference
+        uri = store.put_file(model_path, args.model_name, version, "model.pkl")
     store.put_json(metadata, args.model_name, version, "metadata.json")
 
     if args.version_file:

@@ -1,0 +1,16 @@
+title = "gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholders rendered by scripts/configure.sh and documentation examples"
+regexes = [
+  '''__AWS_ACCOUNT_ID__''',
+  '''__ADMIN_ROLE_ARN__''',
+  '''__WAF_ACL_ARN__''',
+  '''CHANGE_ME''',
+]
+paths = [
+  '''docs/.*\.md''',
+]

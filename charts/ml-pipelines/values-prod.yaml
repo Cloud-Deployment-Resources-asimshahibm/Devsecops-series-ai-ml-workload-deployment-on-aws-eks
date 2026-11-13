@@ -3,8 +3,10 @@ env: prod
 images:
   training:
     tag: "bootstrap"
+    digest: ""
   ray:
     tag: "bootstrap"
+    digest: ""
 
 serviceAccount:
   roleArn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-prod-ml-training

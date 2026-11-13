@@ -48,3 +48,25 @@ variable "anomaly_threshold_usd" {
   type    = number
   default = 50
 }
+
+variable "security_services" {
+  description = "Account-level security services. Set a flag to false if it is already managed centrally (Organizations / Control Tower)."
+  type = object({
+    guardduty       = bool
+    securityhub     = bool
+    inspector       = bool
+    config          = bool
+    cloudtrail      = bool
+    access_analyzer = bool
+    macie           = bool
+  })
+  default = {
+    guardduty       = true
+    securityhub     = true
+    inspector       = true
+    config          = true
+    cloudtrail      = true
+    access_analyzer = true
+    macie           = true
+  }
+}

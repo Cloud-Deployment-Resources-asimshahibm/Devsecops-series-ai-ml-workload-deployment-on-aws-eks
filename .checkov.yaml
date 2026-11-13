@@ -1,0 +1,42 @@
+# Checkov configuration — every skip below is an ACCEPTED RISK with a reason.
+# Changes to this file require a security CODEOWNER review.
+directory:
+  - terraform
+  - ml
+  - .github/workflows
+  - rendered            # helm-rendered charts (CI renders them before scanning)
+framework:
+  - terraform
+  - dockerfile
+  - github_actions
+  - kubernetes
+download-external-modules: true
+quiet: true
+compact: true
+soft-fail: false
+skip-check:
+  # --- Terraform
+  - CKV_AWS_144   # S3 cross-region replication: not required for regenerable ML artifacts (versioning + AWS Backup cover recovery)
+  - CKV_AWS_18    # S3 access logging: CloudTrail S3 data events cover the ML data bucket (security-baseline)
+  - CKV2_AWS_62   # S3 event notifications: not needed
+  - CKV_AWS_338   # CloudWatch log retention >= 1y: flow/WAF logs keep 90d in dev; audit trail keeps 7y in S3
+  - CKV2_AWS_5    # SG attached: VPC endpoint / EFS / RDS SGs are attached via module outputs Checkov cannot follow
+  - CKV_AWS_39    # EKS public endpoint: restricted by CIDR allow-list; conftest denies 0.0.0.0/0 in prod
+  - CKV_AWS_38    # same as above (public access CIDRs)
+  - CKV_AWS_158   # CloudWatch log group KMS: flow-log group created by the VPC module (encrypted by AWS default key)
+  - CKV_AWS_117   # Lambda in VPC: no Lambdas in this project (module internals)
+  - CKV_AWS_272   # Lambda code signing: same
+  - CKV2_AWS_57   # Secrets Manager auto-rotation Lambda: rotation is done via Terraform (`-replace` of random_password) + ESO refresh; see RUNBOOK
+  - CKV_TF_1      # module source commit hash: registry modules are pinned by version constraint + .terraform.lock.hcl
+  # --- Kubernetes (rendered charts)
+  - CKV_K8S_43    # image digest: digests are injected by CI (values-<env>.yaml) and enforced by Kyverno mutateDigest
+  - CKV_K8S_15    # imagePullPolicy Always: digests make IfNotPresent safe
+  - CKV_K8S_35    # secrets as files: done; env vars carry only non-secret config
+  - CKV_K8S_40    # high UID (>10000): images run as uid 1000 (jovyan/ray convention), non-root enforced
+  - CKV2_K8S_6    # NetworkPolicy per pod: provided at namespace level (charts/security-policies, ml-inference)
+  - CKV_K8S_21    # default namespace: charts are namespace-agnostic; Argo CD sets the destination namespace
+  - CKV_K8S_11    # CPU limits: deliberately unset for latency-sensitive inference (CFS throttling); memory limits enforced by Kyverno
+  # --- GitHub Actions
+  - CKV_GHA_7     # workflow_dispatch inputs: operational workflows (train / terraform env); inputs are validated, never reach image builds
+  # --- Dockerfile
+  - CKV_DOCKER_2  # HEALTHCHECK: Kubernetes liveness/readiness probes are used instead

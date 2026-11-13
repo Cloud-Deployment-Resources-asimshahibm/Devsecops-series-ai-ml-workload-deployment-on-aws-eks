@@ -7,7 +7,7 @@ SLO engine. For every entry in .Values.slos this renders:
 */ -}}
 {{- $period := printf "%dd" (int .Values.slo.periodDays) -}}
 {{- $windows := list "5m" "30m" "1h" "2h" "6h" "1d" "3d" -}}
-{{- $repo := "https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS/blob/main/docs/OBSERVABILITY.md" -}}
+{{- $repo := "https://github.com/Cloud-Deployment-Resources-asimshahibm/DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS/blob/main/docs/OBSERVABILITY.md" -}}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:

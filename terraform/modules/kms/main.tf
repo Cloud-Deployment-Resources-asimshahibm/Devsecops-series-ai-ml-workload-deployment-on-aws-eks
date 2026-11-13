@@ -15,6 +15,9 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 data "aws_iam_policy_document" "key" {
+  # checkov:skip=CKV_AWS_109: KMS key policy — "*" resource means "this key"; account root admin is the AWS-recommended default
+  # checkov:skip=CKV_AWS_111: same (key policy, not an identity policy)
+  # checkov:skip=CKV_AWS_356: same
   statement {
     sid       = "AccountAdmin"
     actions   = ["kms:*"]

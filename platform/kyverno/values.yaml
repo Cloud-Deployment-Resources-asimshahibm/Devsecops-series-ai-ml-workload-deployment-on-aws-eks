@@ -1,0 +1,53 @@
+# Kyverno — admission control / policy-as-code (policies: charts/security-policies)
+crds:
+  install: true
+
+config:
+  # never let a policy outage lock you out of the control plane
+  webhooks:
+    - namespaceSelector:
+        matchExpressions:
+          - key: kubernetes.io/metadata.name
+            operator: NotIn
+            values: [kube-system, kyverno]
+
+features:
+  policyExceptions:
+    enabled: true
+    namespace: kyverno          # exceptions are reviewed PRs, only in this namespace
+  registryClient:
+    credentialHelpers: [amazon] # ECR via IRSA (role aiml-<env>-image-verifier)
+
+admissionController:
+  replicas: 1
+  nodeSelector:
+    workload: system
+  rbac:
+    serviceAccount:
+      name: kyverno-admission-controller
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: kube-prometheus-stack
+  container:
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 768Mi }
+
+backgroundController:
+  nodeSelector:
+    workload: system
+  serviceMonitor:
+    enabled: true
+
+reportsController:
+  nodeSelector:
+    workload: system
+  serviceMonitor:
+    enabled: true
+
+cleanupController:
+  nodeSelector:
+    workload: system
+  serviceMonitor:
+    enabled: true

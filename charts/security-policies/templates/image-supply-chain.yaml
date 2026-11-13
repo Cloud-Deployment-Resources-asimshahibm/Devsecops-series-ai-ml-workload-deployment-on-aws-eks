@@ -1,0 +1,96 @@
+# 1) Only images signed by OUR GitHub Actions workflow (cosign keyless, Rekor
+#    transparency log) may run in ML namespaces. mutateDigest rewrites tags to
+#    the verified digest so what was verified is exactly what runs.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-ml-image-signatures
+  annotations:
+    policies.kyverno.io/title: Verify cosign signatures of ML images
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+spec:
+  background: false
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail
+  rules:
+    - name: cosign-keyless-github-actions
+      {{- include "sp.mlMatch" . | nindent 6 }}
+      verifyImages:
+        - imageReferences:
+            {{- range .Values.signing.repositories }}
+            - "{{ include "sp.ecr" $ }}/{{ . }}*"
+            {{- end }}
+          failureAction: {{ .Values.failureAction.imageSignatures }}
+          mutateDigest: true
+          verifyDigest: true
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: {{ .Values.signing.issuer | quote }}
+                    subject: {{ .Values.signing.subject | quote }}
+                    rekor:
+                      url: {{ .Values.signing.rekorUrl }}
+---
+# 2) Trusted registries only (our ECR + explicitly allowed sidecars)
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-image-registries
+  annotations:
+    policies.kyverno.io/title: Restrict image registries in ML namespaces
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+spec:
+  background: true
+  rules:
+    - name: ecr-only
+      {{- include "sp.mlMatch" . | nindent 6 }}
+      validate:
+        failureAction: {{ .Values.failureAction.trustedRegistries }}
+        message: "Images in ML namespaces must come from {{ include "sp.ecr" . }}/aiml/* (or an approved sidecar registry)."
+        foreach:
+          - list: "request.object.spec.[containers, initContainers, ephemeralContainers][]"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ "{{" }} element.image {{ "}}" }}"
+                    operator: AnyNotIn
+                    value:
+                      - "{{ include "sp.ecr" . }}/aiml/*"
+                      {{- range .Values.extraTrustedRegistries }}
+                      - {{ . | quote }}
+                      {{- end }}
+---
+# 3) No mutable :latest tags anywhere in the cluster
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow latest tag
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+spec:
+  background: true
+  rules:
+    - name: require-explicit-tag-or-digest
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      validate:
+        failureAction: {{ .Values.failureAction.latestTag }}
+        message: "Use an explicit image tag or digest, never ':latest' or an untagged image."
+        foreach:
+          - list: "request.object.spec.[containers, initContainers, ephemeralContainers][]"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ "{{" }} element.image {{ "}}" }}"
+                    operator: Equals
+                    value: "*:latest"
+                  - key: "{{ "{{" }} contains(element.image, ':') || contains(element.image, '@') {{ "}}" }}"
+                    operator: Equals
+                    value: false

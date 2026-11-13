@@ -1,0 +1,39 @@
+# Project-specific Semgrep rules for ML supply-chain risks (run with the registry packs in CI)
+rules:
+  - id: unverified-model-deserialization
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Model artifacts are code: pickle/joblib/torch.load execute arbitrary code on load.
+      Load models only through ModelManager.load(), which verifies the SHA-256 and the
+      ModelScan record first (ml/inference/app/model.py).
+    patterns:
+      - pattern-either:
+          - pattern: pickle.load(...)
+          - pattern: pickle.loads(...)
+          - pattern: joblib.load(...)
+          - pattern: torch.load(...)
+          - pattern: dill.load(...)
+      - pattern-not-inside: |
+          def load(self, ...):
+              ...
+              self.verify(...)
+              ...
+    paths:
+      exclude: ["ml/tests/**"]
+  - id: yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: Use yaml.safe_load — yaml.load can construct arbitrary Python objects.
+    pattern: yaml.load(...)
+  - id: requests-without-timeout
+    languages: [python]
+    severity: WARNING
+    message: Network calls need a timeout (hung model-store / registry calls exhaust workers).
+    pattern-either:
+      - pattern: requests.$M(..., timeout=None, ...)
+  - id: subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: subprocess with shell=True enables command injection.
+    pattern: subprocess.$F(..., shell=True, ...)

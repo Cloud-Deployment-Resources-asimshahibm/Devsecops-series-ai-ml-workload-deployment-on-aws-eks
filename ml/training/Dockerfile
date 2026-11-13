@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Build context: ./ml   (docker build -f ml/training/Dockerfile ml)
-FROM python:3.12-slim AS base
+FROM python:3.12-slim-bookworm AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY training/requirements.txt /tmp/requirements.txt
-RUN pip install --upgrade pip && pip install -r /tmp/requirements.txt
+RUN pip install "pip==24.3.1" && pip install -r /tmp/requirements.txt
 
 COPY common/mlstore.py /app/mlstore.py
 COPY training/trainer /app/trainer
@@ -20,7 +20,7 @@ USER 1000
 
 ARG GIT_SHA=local
 ENV GIT_SHA=${GIT_SHA}
-LABEL org.opencontainers.image.source="https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS" \
+LABEL org.opencontainers.image.source="https://github.com/Cloud-Deployment-Resources-asimshahibm/DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS" \
       org.opencontainers.image.revision="${GIT_SHA}"
 
 ENTRYPOINT ["python", "-m"]

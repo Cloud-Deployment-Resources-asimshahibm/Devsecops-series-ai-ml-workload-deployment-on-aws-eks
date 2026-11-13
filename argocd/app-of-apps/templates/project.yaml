@@ -1,30 +1,50 @@
+{{- range $name, $p := .Values.projects }}
+---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: {{ .Values.project }}
+  name: {{ $name }}
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "-100"
 spec:
-  description: AI/ML platform ({{ .Values.env }})
+  description: {{ $p.description }} ({{ $.Values.env }})
   sourceRepos:
-    - {{ .Values.repoURL }}
-    {{- range $name, $app := .Values.apps }}
+    - {{ $.Values.repoURL }}
+    {{- if $p.clusterResources }}
+    {{- range $app := $.Values.apps }}
     {{- if and $app.enabled $app.chart }}
     - {{ $app.chart.repo }}
     {{- end }}
     {{- end }}
+    {{- end }}
   destinations:
+    {{- range $p.destinations }}
     - server: https://kubernetes.default.svc
-      namespace: "*"
+      namespace: {{ . | quote }}
+    {{- end }}
+  {{- if $p.clusterResources }}
   # Operators install CRDs, webhooks and cluster RBAC
   clusterResourceWhitelist:
     - group: "*"
       kind: "*"
+  {{- else }}
+  clusterResourceWhitelist: []
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+  {{- end }}
   orphanedResources:
     warn: true
+  {{- with $p.syncWindows }}
+  syncWindows:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   roles:
     - name: read-only
       description: Read-only access for ML engineers
       policies:
-        - p, proj:{{ .Values.project }}:read-only, applications, get, {{ .Values.project }}/*, allow
+        - p, proj:{{ $name }}:read-only, applications, get, {{ $name }}/*, allow
+{{- end }}

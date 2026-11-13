@@ -23,6 +23,7 @@ terraform {
     key          = "global/terraform.tfstate"
     region       = "${REGION}"
     encrypt      = true
+    kms_key_id   = "$(terraform output -raw state_kms_key_alias)"
     use_lockfile = true
   }
 }

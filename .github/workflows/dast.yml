@@ -1,0 +1,63 @@
+name: DAST (OWASP ZAP API scan, dev)
+
+# Stage 6 (TEST in a running environment): dynamic scan of the deployed
+# inference API using its OpenAPI spec, authenticated with a dev API key.
+on:
+  workflow_call:          # called by build-and-deploy.yml after deploy-dev
+    secrets:
+      DAST_API_KEY:
+        required: true
+  schedule:
+    - cron: "17 4 * * 1"   # weekly, Monday 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zap:
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      issues: write
+    env:
+      TARGET: ${{ vars.DEV_INFERENCE_URL }}     # e.g. https://api.dev.example.com (ALB)
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Wait for Argo CD to roll out the new version
+        run: |
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$TARGET/readyz" || true)
+            [ "$code" = "200" ] && exit 0
+            sleep 20
+          done
+          echo "::error::$TARGET/readyz not ready"; exit 1
+      - name: Authenticate ZAP with the dev API key (header injected into every request)
+        env:
+          KEY: ${{ secrets.DAST_API_KEY }}
+        run: |
+          {
+            echo "ZAP_AUTH_HEADER=X-API-Key"
+            echo "ZAP_AUTH_HEADER_VALUE=${KEY}"
+          } > zap.env
+      - name: ZAP API scan (OpenAPI, authenticated)
+        uses: zaproxy/action-api-scan@v0.9.0
+        with:
+          docker_env_vars: zap.env
+          target: ${{ env.TARGET }}/openapi.json
+          format: openapi
+          rules_file_name: .zap/rules.tsv
+          allow_issue_writing: false
+          fail_action: true
+          cmd_options: "-a"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-report
+          path: report_*.*

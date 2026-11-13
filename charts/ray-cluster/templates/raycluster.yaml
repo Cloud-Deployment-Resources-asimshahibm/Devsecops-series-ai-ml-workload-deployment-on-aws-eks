@@ -1,4 +1,6 @@
-{{- $image := printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+{{- $image := ternary (printf "%s@%s" .Values.image.repository .Values.image.digest) (printf "%s:%s" .Values.image.repository .Values.image.tag) (ne .Values.image.digest "") -}}
+{{- $podSec := dict "runAsNonRoot" true "runAsUser" 1000 "fsGroup" 100 "seccompProfile" (dict "type" "RuntimeDefault") -}}
+{{- $ctrSec := dict "allowPrivilegeEscalation" false "capabilities" (dict "drop" (list "ALL")) -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -36,6 +38,8 @@ spec:
     resources:
       requests: { cpu: 250m, memory: 512Mi }
       limits: { cpu: 500m, memory: 1Gi }
+    securityContext:
+      {{- toYaml $ctrSec | nindent 6 }}
   headGroupSpec:
     rayStartParams:
       dashboard-host: "0.0.0.0"
@@ -47,6 +51,8 @@ spec:
           ray.io/node-type: head
       spec:
         serviceAccountName: {{ .Values.serviceAccount.name }}
+        securityContext:
+          {{- toYaml $podSec | nindent 10 }}
         nodeSelector:
           {{- toYaml .Values.head.nodeSelector | nindent 10 }}
         containers:
@@ -63,6 +69,8 @@ spec:
               - { name: RAY_PROMETHEUS_HOST, value: "http://kube-prometheus-stack-prometheus.monitoring.svc:9090" }
             resources:
               {{- toYaml .Values.head.resources | nindent 14 }}
+            securityContext:
+              {{- toYaml $ctrSec | nindent 14 }}
             lifecycle:
               preStop:
                 exec:
@@ -95,6 +103,8 @@ spec:
             ray.io/worker-group: {{ .name }}
         spec:
           serviceAccountName: {{ $.Values.serviceAccount.name }}
+          securityContext:
+            {{- toYaml $podSec | nindent 12 }}
           nodeSelector:
             {{- toYaml .nodeSelector | nindent 12 }}
           {{- with .tolerations }}
@@ -110,6 +120,8 @@ spec:
                 - { name: AWS_REGION, value: us-east-1 }
               resources:
                 {{- toYaml .resources | nindent 16 }}
+              securityContext:
+                {{- toYaml $ctrSec | nindent 16 }}
               lifecycle:
                 preStop:
                   exec:

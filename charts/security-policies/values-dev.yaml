@@ -1,0 +1,8 @@
+env: dev
+failureAction:
+  imageSignatures: Enforce
+  trustedRegistries: Enforce
+  podSecurity: Enforce
+  resourceLimits: Audit   # dev: report only, data scientists iterate on sizing
+  latestTag: Enforce
+  hostAccess: Enforce

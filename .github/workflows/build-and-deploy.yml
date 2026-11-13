@@ -1,10 +1,12 @@
-name: Build & Deploy (dev)
+name: Build, Sign & Deploy (dev)
 
-# Build once, deploy everywhere:
-#  1. build ml-inference, ml-training, ml-ray images (tag = git sha, immutable)
-#  2. Trivy scan — CRITICAL vulns fail the build
-#  3. push to ECR, attach SBOM + provenance
-#  4. GitOps: bump image tags in values-dev.yaml and commit -> Argo CD syncs dev
+# Stage 3 (BUILD) + Stage 4 (RELEASE) + Stage 5 (DEPLOY) for the ML images.
+#
+#  build ──► Trivy (vuln+secret+misconfig, HIGH/CRITICAL fixable = fail) ──► Grype (2nd opinion, CRITICAL = fail)
+#        ──► push (only if clean) ──► SBOM (Syft SPDX) ──► cosign keyless SIGN (Sigstore, GitHub OIDC)
+#        ──► SBOM attestation (cosign) + SLSA build provenance (GitHub attestations, pushed to ECR)
+#        ──► verify signature ──► GitOps: pin image DIGEST in values-dev.yaml ──► Argo CD syncs
+#  In-cluster, Kyverno re-verifies the signature at admission (charts/security-policies).
 on:
   push:
     branches: [main]
@@ -12,12 +14,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
-  contents: write     # commit the tag bump
+  contents: read
 
 env:
   AWS_REGION: us-east-1
   ECR_PREFIX: aiml
+  CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/build-and-deploy.yml@refs/heads/main
+  CERT_ISSUER: https://token.actions.githubusercontent.com
 
 concurrency:
   group: build-and-deploy
@@ -30,7 +33,12 @@ jobs:
       run:
         working-directory: ml
     steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -41,6 +49,11 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write          # AWS OIDC + Sigstore keyless signing
+      attestations: write      # SLSA provenance
+      security-events: write   # SARIF upload
     strategy:
       fail-fast: true
       matrix:
@@ -51,10 +64,13 @@ jobs:
             dockerfile: ml/training/Dockerfile
           - image: ml-ray
             dockerfile: ml/training/Dockerfile.ray
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
     steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - id: meta
         run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
       - uses: aws-actions/configure-aws-credentials@v4
@@ -63,64 +79,156 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - id: ecr
         uses: aws-actions/amazon-ecr-login@v2
+      - id: ref
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_NAME: ${{ matrix.image }}
+        run: echo "image=${REGISTRY}/${ECR_PREFIX}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
-      - name: Build (load locally for scanning)
+
+      # ---------------- BUILD (local only — nothing leaves the runner before it passes the scans)
+      - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: ml
           file: ${{ matrix.dockerfile }}
           build-args: GIT_SHA=${{ github.sha }}
-          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_PREFIX }}/${{ matrix.image }}:${{ steps.meta.outputs.tag }}
+          tags: ${{ steps.ref.outputs.image }}:${{ steps.meta.outputs.tag }}
           load: true
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-      - name: Trivy image scan
+
+      # ---------------- SCAN (gates)
+      - name: "Gate: Trivy (vulns + secrets + misconfig)"
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_PREFIX }}/${{ matrix.image }}:${{ steps.meta.outputs.tag }}
-          severity: CRITICAL
+          version: v0.76.1
+          image-ref: ${{ steps.ref.outputs.image }}:${{ steps.meta.outputs.tag }}
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
           ignore-unfixed: true
+          trivyignores: .trivyignore
           exit-code: "1"
-          vuln-type: os,library
-      - name: Push with SBOM + provenance
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: trivy-image-${{ matrix.image }}
+      - name: "Gate: Grype (second scanner, CRITICAL fails)"
+        uses: anchore/scan-action@v4
+        with:
+          image: ${{ steps.ref.outputs.image }}:${{ steps.meta.outputs.tag }}
+          fail-build: true
+          severity-cutoff: critical
+          only-fixed: true
+          output-format: table
+
+      # ---------------- RELEASE: push, SBOM, sign, attest
+      - name: Push
+        id: push
         uses: docker/build-push-action@v6
         with:
           context: ml
           file: ${{ matrix.dockerfile }}
           build-args: GIT_SHA=${{ github.sha }}
-          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_PREFIX }}/${{ matrix.image }}:${{ steps.meta.outputs.tag }}
+          tags: ${{ steps.ref.outputs.image }}:${{ steps.meta.outputs.tag }}
           push: true
-          sbom: true
-          provenance: mode=max
+          provenance: false        # provenance is attested separately (signed, verifiable)
           cache-from: type=gha,scope=${{ matrix.image }}
+      - name: SBOM (Syft, SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.ref.outputs.image }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.image }}.spdx.json
+          upload-artifact: true
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+      - name: Sign image (cosign keyless — Fulcio cert bound to this workflow, logged in Rekor)
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "$IMAGE"
+      - name: Attest SBOM (cosign)
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: cosign attest --yes --type spdxjson --predicate "sbom-${{ matrix.image }}.spdx.json" "$IMAGE"
+      - name: Attest SLSA build provenance (GitHub artifact attestations)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.ref.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Verify signature + SBOM attestation before handing to CD
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          cosign verify --certificate-identity "$CERT_IDENTITY" --certificate-oidc-issuer "$CERT_ISSUER" "$IMAGE" > /dev/null
+          cosign verify-attestation --type spdxjson --certificate-identity "$CERT_IDENTITY" --certificate-oidc-issuer "$CERT_ISSUER" "$IMAGE" > /dev/null
+          echo "verified $IMAGE"
+      - name: Record digest for the deploy job
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE_NAME: ${{ matrix.image }}
+        run: |
+          mkdir -p digests && echo "$DIGEST" > "digests/${IMAGE_NAME}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.image }}
+          path: digests/${{ matrix.image }}
+          retention-days: 1
 
   deploy-dev:
     needs: build
     runs-on: ubuntu-latest
     environment: dev
+    permissions:
+      contents: write     # commit the GitOps change
     steps:
-      - uses: actions/checkout@v4
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4   # zizmor: ignore[artipacked] — credentials needed to push the GitOps commit; no artifacts are uploaded from this job
         with:
           ref: main
-      - name: Bump image tags in dev values (GitOps)
-        env:
-          TAG: ${{ needs.build.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+      - name: Pin tags AND signed digests in dev values (GitOps)
         run: |
-          yq -i '.image.tag = strenv(TAG)' charts/ml-inference/values-dev.yaml
-          yq -i '.images.training.tag = strenv(TAG) | .images.ray.tag = strenv(TAG)' charts/ml-pipelines/values-dev.yaml
-          yq -i '.image.tag = strenv(TAG)' charts/ray-cluster/values-dev.yaml
+          TAG="${GITHUB_SHA::12}"
+          INF=$(cat digests/ml-inference); TRN=$(cat digests/ml-training); RAY=$(cat digests/ml-ray)
+          export TAG INF TRN RAY
+          yq -i '.image.tag = strenv(TAG) | .image.digest = strenv(INF)' charts/ml-inference/values-dev.yaml
+          yq -i '.images.training.tag = strenv(TAG) | .images.training.digest = strenv(TRN) | .images.ray.tag = strenv(TAG) | .images.ray.digest = strenv(RAY)' charts/ml-pipelines/values-dev.yaml
+          yq -i '.image.tag = strenv(TAG) | .image.digest = strenv(RAY)' charts/ray-cluster/values-dev.yaml
           git diff --stat
       - name: Commit and push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add charts/*/values-dev.yaml
-          git commit -m "deploy(dev): ml images ${{ needs.build.outputs.tag }} [skip ci]" || { echo "nothing to commit"; exit 0; }
+          git commit -m "deploy(dev): signed ml images ${GITHUB_SHA::12} [skip ci]" || { echo "nothing to commit"; exit 0; }
           for i in 1 2 3; do git pull --rebase origin main && git push origin HEAD:main && break; sleep 5; done
       - name: Summary
         run: |
           {
-            echo "### Deployed to dev"
-            echo "Image tag: \`${{ needs.build.outputs.tag }}\`"
-            echo "Argo CD will sync \`ml-inference\`, \`ml-pipelines\`, \`ray-cluster\` within ~2 minutes."
+            echo "### Deployed signed images to dev"
+            for f in digests/*; do echo "- \`$(basename "$f")\` @ \`$(cat "$f")\`"; done
+            echo
+            echo "Kyverno verifies the cosign signature at admission; DAST runs next (dast.yml)."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Stage 6: dynamic testing of what was just deployed
+  dast:
+    needs: deploy-dev
+    permissions:
+      contents: read
+      issues: write
+    uses: ./.github/workflows/dast.yml
+    secrets:
+      DAST_API_KEY: ${{ secrets.DAST_API_KEY }}

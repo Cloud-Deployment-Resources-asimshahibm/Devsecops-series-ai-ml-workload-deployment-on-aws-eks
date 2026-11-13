@@ -1,5 +1,5 @@
-{{- $train := printf "%s:%s" .Values.images.training.repository .Values.images.training.tag -}}
-{{- $ray := printf "%s:%s" .Values.images.ray.repository .Values.images.ray.tag -}}
+{{- $train := ternary (printf "%s@%s" .Values.images.training.repository .Values.images.training.digest) (printf "%s:%s" .Values.images.training.repository .Values.images.training.tag) (ne .Values.images.training.digest "") -}}
+{{- $ray := ternary (printf "%s@%s" .Values.images.ray.repository .Values.images.ray.digest) (printf "%s:%s" .Values.images.ray.repository .Values.images.ray.tag) (ne .Values.images.ray.digest "") -}}
 {{- $store := printf "s3://%s/models" (required "storage.dataBucket is required" .Values.storage.dataBucket) -}}
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
@@ -18,6 +18,25 @@ spec:
   archiveLogs: true
   nodeSelector:
     {{- toYaml .Values.nodeSelector | nindent 4 }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+    - name: tmp
+      emptyDir: {}
+  # applied to every step container (validate, train, scan, promote)
+  templateDefaults:
+    container:
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: { drop: ["ALL"] }
+      volumeMounts:
+        - { name: tmp, mountPath: /tmp }
   arguments:
     parameters:
       - name: model-name
@@ -74,13 +93,20 @@ spec:
                 # if tuning was skipped the file does not exist and train.py falls back to defaults
                 - name: params-uri
                   value: "s3://{{ .Values.storage.dataBucket }}/tuning/{{`{{workflow.uid}}`}}/best_params.json"
+          - name: model-security-scan
+            template: scan-model
+            depends: train.Succeeded
+            arguments:
+              parameters:
+                - name: version
+                  value: "{{`{{tasks.train.outputs.parameters.version}}`}}"
           - name: approval
             template: approval
-            depends: train.Succeeded
+            depends: model-security-scan.Succeeded
             when: "{{`{{workflow.parameters.auto-promote}}`}} == false"
           - name: promote
             template: promote
-            depends: "train.Succeeded && (approval.Succeeded || approval.Skipped)"
+            depends: "model-security-scan.Succeeded && (approval.Succeeded || approval.Skipped)"
             arguments:
               parameters:
                 - name: version
@@ -125,11 +151,19 @@ spec:
             submitterPodTemplate:
               spec:
                 restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 1000
+                  seccompProfile: { type: RuntimeDefault }
                 containers:
                   - name: ray-job-submitter
                     image: {{ $ray }}
                     resources:
                       requests: { cpu: 200m, memory: 256Mi }
+                      limits: { memory: 512Mi }
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities: { drop: ["ALL"] }
 
     - name: train
       inputs:
@@ -164,6 +198,27 @@ spec:
             path: /tmp/metrics.json
             archive:
               none: {}
+
+    # DevSecOps gate: verify artifact SHA-256 + ModelScan for unsafe pickle operators.
+    # Writes security.json; promote refuses versions without a passing record.
+    - name: scan-model
+      inputs:
+        parameters:
+          - name: version
+      container:
+        image: {{ $train }}
+        args:
+          - trainer.scan_model
+          - --model-store={{ $store }}
+          - --model-name={{`{{workflow.parameters.model-name}}`}}
+          - --version={{`{{inputs.parameters.version}}`}}
+        env:
+          - name: AWS_REGION
+            value: us-east-1
+          - name: ARGO_WORKFLOW_NAME
+            value: "{{`{{workflow.name}}`}}"
+        resources:
+          requests: { cpu: 250m, memory: 512Mi }
 
     - name: approval
       suspend: {}   # `argo resume <wf>` or the "Resume" button in the Argo UI

@@ -1,0 +1,22 @@
+# Keep dependencies patched (feeds the pip-audit / Trivy / Grype gates with fixes)
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories: ["/ml/training", "/ml/inference", "/ml"]
+    schedule: { interval: weekly, day: monday }
+    groups:
+      ml-runtime:
+        patterns: ["scikit-learn", "numpy", "joblib", "pandas"]   # must move together (pickle compatibility)
+    labels: [dependencies, security]
+  - package-ecosystem: docker
+    directories: ["/ml/inference", "/ml/training"]
+    schedule: { interval: weekly }
+    labels: [dependencies, security]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: weekly }
+    labels: [dependencies, ci]
+  - package-ecosystem: terraform
+    directories: ["/terraform/global", "/terraform/stack"]
+    schedule: { interval: weekly }
+    labels: [dependencies, infrastructure]

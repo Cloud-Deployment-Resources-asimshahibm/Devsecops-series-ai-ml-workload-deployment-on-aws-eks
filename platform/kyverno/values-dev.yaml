@@ -1,0 +1,6 @@
+admissionController:
+  rbac:
+    serviceAccount:
+      name: kyverno-admission-controller
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-dev-image-verifier

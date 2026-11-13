@@ -4,9 +4,11 @@ images:
   training:
     repository: __AWS_ACCOUNT_ID__.dkr.ecr.us-east-1.amazonaws.com/aiml/ml-training
     tag: "bootstrap"        # bumped by CI
+    digest: ""              # sha256:... (signed) — preferred over tag when set
   ray:
     repository: __AWS_ACCOUNT_ID__.dkr.ecr.us-east-1.amazonaws.com/aiml/ml-ray
     tag: "bootstrap"        # bumped by CI
+    digest: ""
 
 serviceAccount:
   name: ml-training

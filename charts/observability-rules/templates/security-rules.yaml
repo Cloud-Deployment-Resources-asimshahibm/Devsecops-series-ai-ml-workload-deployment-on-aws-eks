@@ -1,0 +1,88 @@
+{{- if .Values.security.enabled }}
+{{- $prodSev := ternary "critical" "warning" (eq .Values.env "prod") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: security-posture
+  labels:
+    app.kubernetes.io/part-of: ml-platform
+    app.kubernetes.io/component: security
+spec:
+  groups:
+    - name: security.supply-chain
+      rules:
+        - alert: KyvernoImageSignatureVerificationFailed
+          expr: sum by (resource_namespace, rule_name) (increase(kyverno_policy_results_total{policy_name="verify-ml-image-signatures", rule_result="fail"}[15m])) > 0
+          labels: { severity: critical, team: security, category: supply-chain }
+          annotations:
+            summary: "Unsigned or tampered image blocked in {{ "{{" }} $labels.resource_namespace {{ "}}" }}"
+            description: "An image not signed by the build-and-deploy workflow was submitted. Treat as a supply-chain incident until explained (see docs/DEVSECOPS.md#playbooks)."
+        - alert: ModelArtifactIntegrityFailure
+          expr: sum(increase(mlserve_model_integrity_failures_total[10m])) > 0
+          labels: { severity: critical, team: security, category: supply-chain }
+          annotations:
+            summary: "ml-inference rejected a model artifact (digest mismatch or not security-scanned)"
+            description: "Possible tampering with the S3 model registry. Check CloudTrail S3 data events for the model prefix."
+        - alert: CriticalVulnerabilityInRunningImage
+          expr: sum by (namespace, resource_name, image_repository) (trivy_image_vulnerabilities{severity="Critical"}) > 0
+          for: 1h
+          labels: { severity: {{ $prodSev }}, team: security, category: vulnerability }
+          annotations:
+            summary: "{{ "{{" }} $value {{ "}}" }} fixable CRITICAL CVEs in {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.resource_name {{ "}}" }}"
+            description: "Remediation SLA: critical {{ .Values.security.remediationSlaDays.critical }}d, high {{ .Values.security.remediationSlaDays.high }}d. Rebuild the image (base image / dependency bump) and promote."
+        - alert: SecretExposedInImage
+          expr: sum by (namespace, resource_name) (trivy_image_exposedsecrets) > 0
+          labels: { severity: critical, team: security, category: secrets }
+          annotations:
+            summary: "Trivy found an embedded secret in image used by {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.resource_name {{ "}}" }}"
+            description: "Rotate the credential immediately, then rebuild the image without it."
+
+    - name: security.policy
+      rules:
+        - alert: KyvernoPolicyViolations
+          expr: sum by (policy, namespace) (policy_report_result{status="fail"}) > 0
+          for: 30m
+          labels: { severity: warning, team: security, category: policy }
+          annotations:
+            summary: "Policy {{ "{{" }} $labels.policy {{ "}}" }} has {{ "{{" }} $value {{ "}}" }} failing resources in {{ "{{" }} $labels.namespace {{ "}}" }}"
+        - alert: KyvernoAdmissionDenials
+          expr: sum by (resource_namespace) (increase(kyverno_admission_requests_total{request_allowed="false"}[10m])) > 5
+          labels: { severity: warning, team: security, category: policy }
+          annotations:
+            summary: "Kyverno denied >5 admission requests in {{ "{{" }} $labels.resource_namespace {{ "}}" }} in 10m (broken deploy or probing)"
+        - alert: KyvernoWebhookDown
+          expr: absent(up{job=~".*kyverno.*admission.*"} == 1)
+          for: 5m
+          labels: { severity: critical, team: platform, category: policy }
+          annotations:
+            summary: "Kyverno admission controller is down — failurePolicy=Fail blocks ML pod creation"
+        - alert: CriticalMisconfigurationDetected
+          expr: sum by (namespace, resource_name) (trivy_resource_configaudits{severity="Critical"}) > 0
+          for: 1h
+          labels: { severity: warning, team: security, category: misconfiguration }
+          annotations:
+            summary: "Critical config-audit finding on {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.resource_name {{ "}}" }}"
+
+    - name: security.runtime
+      rules:
+        - alert: FalcoCriticalEvent
+          expr: |
+            sum by (rule, k8s_ns_name) (increase(falcosecurity_falcosidekick_falco_events_total{priority=~"(?i)critical|alert|emergency"}[5m])) > 0
+            or
+            sum by (rule) (increase(falco_events{priority=~"(?i)critical|alert|emergency"}[5m])) > 0
+          labels: { severity: critical, team: security, category: runtime }
+          annotations:
+            summary: "Falco: {{ "{{" }} $labels.rule {{ "}}" }}"
+            description: "Runtime threat detected. Isolate the pod (NetworkPolicy deny-all label), capture evidence, follow the runtime playbook."
+        - alert: FalcoWarningEventsSpike
+          expr: sum by (rule) (increase(falcosecurity_falcosidekick_falco_events_total{priority=~"(?i)warning|error"}[15m])) > 10
+          labels: { severity: warning, team: security, category: runtime }
+          annotations:
+            summary: "Falco rule {{ "{{" }} $labels.rule {{ "}}" }} fired >10 times in 15m"
+        - alert: InferenceAuthFailureSpike
+          expr: sum(rate(mlserve_auth_failures_total[5m])) > 1
+          for: 5m
+          labels: { severity: warning, team: security, category: abuse }
+          annotations:
+            summary: "ml-inference rejecting >1 unauthenticated request/s for 5m (credential stuffing / leaked endpoint)"
+{{- end }}

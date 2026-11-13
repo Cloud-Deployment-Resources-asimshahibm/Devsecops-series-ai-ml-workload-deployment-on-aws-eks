@@ -97,6 +97,7 @@ resource "aws_security_group" "vpc_endpoints" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "vpc_endpoints" {
+  description       = "HTTPS to interface endpoints from inside the VPC"
   security_group_id = aws_security_group.vpc_endpoints.id
   cidr_ipv4         = var.vpc_cidr
   ip_protocol       = "tcp"
@@ -384,4 +385,33 @@ module "cost_guardrails" {
   monthly_budget_usd = var.budgets.monthly_total_usd
   compute_budget_usd = var.budgets.monthly_compute_usd
   alert_emails       = var.budgets.alert_emails
+}
+
+# ------------------------------------------------------------------------------
+# DevSecOps: edge protection + sensitive-data discovery
+# ------------------------------------------------------------------------------
+module "waf" {
+  source              = "../modules/waf"
+  name                = local.name
+  kms_key_arn         = module.kms.key_arn
+  rate_limit_per_5min = var.waf.rate_limit_per_5min
+}
+
+# Weekly Macie scan of datasets / model registry for PII & credentials
+resource "aws_macie2_classification_job" "ml_data" {
+  count               = var.macie_scan_ml_data ? 1 : 0
+  name                = "${local.name}-ml-data-weekly"
+  job_type            = "SCHEDULED"
+  sampling_percentage = var.environment == "prod" ? 100 : 25
+
+  schedule_frequency {
+    weekly_schedule = "SUNDAY"
+  }
+
+  s3_job_definition {
+    bucket_definitions {
+      account_id = local.account_id
+      buckets    = [module.storage.bucket_names["data"]]
+    }
+  }
 }

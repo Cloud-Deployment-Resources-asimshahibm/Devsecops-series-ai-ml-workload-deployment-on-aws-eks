@@ -1,6 +1,17 @@
-name: CI
+name: DevSecOps CI
 
-# Runs on every PR and push: fast feedback, no cloud credentials needed.
+# Stage 1 (CODE) + Stage 2 (BUILD-TIME TEST) gates on every PR and push.
+# Nothing here needs cloud credentials. Each job is a separate, named gate so
+# branch protection can require them individually.
+#
+#   secrets     gitleaks (full history)
+#   sast        Semgrep (OWASP Top 10, Python, Dockerfile, K8s, Terraform rules) + Bandit
+#   sca         pip-audit + OSV-Scanner (+ Dependency Review & license policy on PRs)
+#   iac         Checkov (Terraform, Dockerfile, GitHub Actions, rendered K8s) + Trivy config
+#   k8s-policy  Kyverno CLI: rendered charts must pass the same admission policies as the cluster
+#   containers  hadolint
+#   gha         actionlint + zizmor (workflow injection, excessive permissions, unpinned actions)
+#   unit        ruff + pytest (incl. model-security tests) · terraform validate · conftest verify
 on:
   pull_request:
   push:
@@ -14,60 +25,266 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GITLEAKS_VERSION: "8.21.2"
+  KYVERNO_VERSION: "1.19.2"
+  HADOLINT_VERSION: "2.12.0"
+  OSV_VERSION: "1.9.2"
+
 jobs:
-  python:
-    name: Python lint + tests
+  # ------------------------------------------------------------------ CODE
+  secrets:
+    name: "code · secret scanning (gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks (all commits)
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar xz gitleaks
+          ./gitleaks detect --source . --config .gitleaks.toml --redact --report-format sarif --report-path gitleaks.sarif --exit-code 1
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+  sast:
+    name: "code · SAST (Semgrep + Bandit)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "semgrep==1.99.0" "bandit[sarif]==1.8.0"
+      - name: Semgrep (blocking on ERROR severity)
+        run: |
+          semgrep scan --metrics=off --error --severity ERROR \
+            --config p/owasp-top-ten --config p/python --config p/dockerfile \
+            --config p/kubernetes --config p/terraform --config p/github-actions \
+            --config .semgrep/ml-security.yml \
+            --sarif --output semgrep.sarif .
+      - name: Bandit (Python security linter, medium+ severity & confidence)
+        run: bandit -r ml -c ml/bandit.yaml -ll -ii -f sarif -o bandit.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  sca:
+    name: "code · dependencies (pip-audit + OSV)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "pip-audit==2.7.3"
+      - name: pip-audit (known-vulnerable Python packages)
+        run: |
+          for req in ml/training/requirements.txt ml/inference/requirements.txt; do
+            echo "::group::$req"; pip-audit --strict --progress-spinner off -r "$req"; echo "::endgroup::"
+          done
+      - name: OSV-Scanner (all lockfiles / manifests)
+        run: |
+          curl -sSL -o osv-scanner "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+          chmod +x osv-scanner && ./osv-scanner --recursive --skip-git .
+
+  dependency-review:
+    name: "code · dependency review (PR)"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          deny-licenses: AGPL-1.0-or-later, AGPL-3.0-only, AGPL-3.0-or-later, SSPL-1.0
+          comment-summary-in-pr: on-failure
+
+  iac:
+    name: "code · IaC & config scanning (Checkov + Trivy)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - name: Render our Helm charts (prod values) for scanning
+        run: |
+          mkdir -p rendered
+          for chart in charts/*; do
+            helm template "$(basename "$chart")" "$chart" -f "$chart/values.yaml" -f "$chart/values-prod.yaml" > "rendered/$(basename "$chart").yaml"
+          done
+      - name: Checkov (blocking; accepted risks documented in .checkov.yaml)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          config_file: .checkov.yaml
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+      - name: Trivy config (Terraform, Dockerfiles, K8s) — HIGH/CRITICAL block
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          version: v0.76.1
+          scan-type: config
+          scan-ref: .
+          trivy-config: trivy.yaml
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  k8s-policy:
+    name: "code · Kubernetes policy (Kyverno CLI, shift-left)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - name: Install Kyverno CLI
+        run: |
+          curl -sSL "https://github.com/kyverno/kyverno/releases/download/v${KYVERNO_VERSION}/kyverno-cli_v${KYVERNO_VERSION}_linux_x86_64.tar.gz" | tar xz kyverno
+          sudo mv kyverno /usr/local/bin/
+      - name: Apply the cluster's admission policies to our rendered workloads
+        run: scripts/policy-check.sh
+
+  containers:
+    name: "build · Dockerfile lint (hadolint)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: hadolint
+        run: |
+          curl -sSL -o hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64"
+          chmod +x hadolint
+          ./hadolint --config .hadolint.yaml ml/inference/Dockerfile ml/training/Dockerfile ml/training/Dockerfile.ray
+
+  gha:
+    name: "code · workflow security (actionlint + zizmor)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "zizmor==1.31.1"
+      - name: zizmor (injection, permissions, artipacked, unpinned actions)
+        run: zizmor --config zizmor.yml --format sarif .github/workflows > zizmor.sarif || (zizmor --config zizmor.yml .github/workflows; exit 1)
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+      - name: actionlint
+        run: |
+          bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.4/scripts/download-actionlint.bash) 1.7.4
+          ./actionlint -color
+
+  # ------------------------------------------------------------------ BUILD-TIME TEST
+  unit:
+    name: "test · unit + model-security tests"
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: ml
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: ml/requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - run: ruff check .
-      - run: ruff format --check . || echo "::warning::run 'ruff format ml' locally"
-      - run: pytest -q --junitxml=pytest.xml
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pytest-results
-          path: ml/pytest.xml
+      - run: ruff check . && ruff format --check .
+      - run: pytest -q --junitxml=pytest.xml   # includes real ModelScan detection of a malicious pickle
 
   terraform:
-    name: Terraform fmt + validate + tflint
+    name: "test · terraform validate + policy unit tests"
     runs-on: ubuntu-latest
     strategy:
       matrix:
         dir: [terraform/global, terraform/stack]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
-      - name: fmt
-        run: terraform fmt -check -recursive -diff terraform
-      - name: validate
-        working-directory: ${{ matrix.dir }}
-        run: |
-          terraform init -backend=false -input=false
-          terraform validate
+      - run: terraform fmt -check -recursive terraform
+      - working-directory: ${{ matrix.dir }}
+        run: terraform init -backend=false -input=false && terraform validate
       - uses: terraform-linters/setup-tflint@v4
-      - name: tflint
-        working-directory: ${{ matrix.dir }}
+      - working-directory: ${{ matrix.dir }}
+        run: tflint --init && tflint --recursive --format compact
+      - name: conftest verify (unit tests for the Terraform plan policies)
         run: |
-          tflint --init
-          tflint --recursive --format compact
+          curl -sSL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_0.56.0_Linux_x86_64.tar.gz | tar xz conftest
+          ./conftest verify -p policy/terraform
 
   helm:
-    name: Helm lint + render + kubeconform
+    name: "test · helm lint + kubeconform"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.4
@@ -80,45 +297,11 @@ jobs:
           set -euo pipefail
           for chart in charts/* argocd/app-of-apps; do
             for env in dev prod; do
-              echo "::group::$chart ($env)"
               helm lint "$chart" -f "$chart/values.yaml" -f "$chart/values-$env.yaml"
               helm template t "$chart" -f "$chart/values.yaml" -f "$chart/values-$env.yaml" \
-                | kubeconform -strict -summary -ignore-missing-schemas \
-                    -schema-location default \
+                | kubeconform -strict -summary -ignore-missing-schemas -schema-location default \
                     -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
-              echo "::endgroup::"
             done
           done
-      - name: Kustomize render
-        run: kubectl kustomize observability/extras > /dev/null
-      - name: Validate dashboards are valid JSON
-        run: for f in observability/extras/dashboards/*.json; do jq empty "$f"; done
-
-  security:
-    name: Security scans (IaC + deps)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Checkov (Terraform, k8s, Dockerfiles)
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: .
-          framework: terraform,dockerfile,github_actions
-          soft_fail: true            # report only; tighten once baseline is triaged
-          output_format: sarif
-          output_file_path: checkov.sarif
-      - name: Trivy filesystem scan (dependencies, secrets)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: fs
-          scanners: vuln,secret,misconfig
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "0"
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always() && hashFiles('checkov.sarif') != ''
-        with:
-          sarif_file: checkov.sarif
+      - run: kubectl kustomize observability/extras > /dev/null
+      - run: for f in observability/extras/dashboards/*.json; do jq empty "$f"; done

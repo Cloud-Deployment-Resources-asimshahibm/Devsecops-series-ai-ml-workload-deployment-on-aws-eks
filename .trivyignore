@@ -1,0 +1,8 @@
+# Accepted findings (ID + justification + expiry). Reviewed by security CODEOWNERS.
+# Format: <ID>  # reason — exp:YYYY-MM-DD   (trivy honours "exp:" to auto-expire an ignore)
+
+# AVD-AWS-0040/0041: EKS public endpoint — restricted to allow-listed CIDRs; prod gated by conftest
+AVD-AWS-0040 exp:2027-06-30
+AVD-AWS-0041 exp:2027-06-30
+# AVD-KSV-0014/KSV014: readOnlyRootFilesystem — Ray head/workers need a writable /tmp/ray (object spilling)
+KSV014 exp:2027-06-30

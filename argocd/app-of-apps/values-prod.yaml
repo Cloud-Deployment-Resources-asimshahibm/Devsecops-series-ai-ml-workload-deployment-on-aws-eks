@@ -2,3 +2,20 @@ env: prod
 # Production tracks main as well; promotion happens through values-prod.yaml
 # changes (image tags) merged via reviewed PRs. To freeze prod to a release
 # tag instead, set:  revision: v1.2.0
+
+projects:
+  ml-platform:
+    description: Platform components (operators, observability, security)
+    destinations: ["*"]
+    clusterResources: true
+  ml-workloads:
+    description: ML workloads (inference, pipelines, Ray) — namespaced only
+    destinations: [ml-serving, ml-training, ray]
+    clusterResources: false
+    # change freeze: no automated syncs of ML workloads 22:00-06:00 UTC (manual sync still allowed)
+    syncWindows:
+      - kind: deny
+        schedule: "0 22 * * *"
+        duration: 8h
+        applications: ["*"]
+        manualSync: true

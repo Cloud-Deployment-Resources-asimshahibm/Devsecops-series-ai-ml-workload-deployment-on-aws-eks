@@ -2,8 +2,9 @@
 
 Layout under the store root (e.g. s3://aiml-dev-ml-data-<acct>/models):
 
-    <model>/<version>/model.joblib      serialized sklearn pipeline
-    <model>/<version>/metadata.json     metrics, params, gate result, git sha
+    <model>/<version>/model.pkl      serialized sklearn pipeline
+    <model>/<version>/metadata.json     metrics, params, gate result, git sha, artifact_sha256
+    <model>/<version>/security.json     ModelScan result (written by the scan step, required to promote)
     <model>/latest.json                 {"version": ..., "previous": ...}  <- written ONLY by promotion
 
 Inference servers follow latest.json, so promotion / rollback is a single,
@@ -12,11 +13,25 @@ atomic pointer write and never requires a redeploy.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+
+def sha256_file(path: Path | str, chunk: int = 1 << 20) -> str:
+    """SHA-256 of a file, used to pin model artifacts (supply-chain integrity)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+class IntegrityError(RuntimeError):
+    """Model artifact does not match its recorded digest or has not passed the security scan."""
 
 
 def _split_s3(uri: str) -> tuple[str, str]:

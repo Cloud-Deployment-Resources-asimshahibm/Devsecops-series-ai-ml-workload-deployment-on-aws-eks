@@ -68,6 +68,16 @@ slos:
       errors: sum(increase(argo_workflows_ml_pipeline_runs_total{status=~"Failed|Error"}[__WINDOW__]))
       total: sum(increase(argo_workflows_ml_pipeline_runs_total[__WINDOW__]))
 
+  - name: ml-inference-authorized-traffic
+    service: ml-inference
+    team: security
+    objective: 0.99       # ≤1% of /v1 requests rejected for auth (higher = abuse or leaked/rotated keys)
+    description: "Share of prediction requests that present a valid API key"
+    page: false
+    sli:
+      errors: sum(rate(mlserve_auth_failures_total[__WINDOW__]))
+      total: sum(rate(mlserve_http_requests_total{namespace="ml-serving",route=~"/v1/.*"}[__WINDOW__]))
+
   - name: jupyterhub-spawn-success
     service: jupyterhub
     team: ml-platform
@@ -89,3 +99,12 @@ cost:
   idleRatioWarn: 0.5             # > 50% of node spend not requested by any pod
   unallocatedGpuHourlyUSD: 0.5   # paying for GPU capacity no pod requested
   namespaceHourlyUSD: {}         # optional per-namespace caps, e.g. { ray: 3, jupyterhub: 2 }
+
+# ------------------------------------------------------------------------------
+# Security posture alerts (Kyverno, Trivy Operator, Falco, model integrity, auth)
+# ------------------------------------------------------------------------------
+security:
+  enabled: true
+  remediationSlaDays:
+    critical: 7
+    high: 30

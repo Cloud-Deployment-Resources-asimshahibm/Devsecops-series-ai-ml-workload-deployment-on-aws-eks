@@ -57,3 +57,20 @@ resource "aws_secretsmanager_secret_version" "es_grafana" {
   secret_id     = aws_secretsmanager_secret.es_grafana.id
   secret_string = jsonencode({ username = "grafana", password = random_password.es_grafana.result })
 }
+
+# API keys for the ml-inference API (/v1/*). Rotate by tainting the random_password.
+resource "random_password" "inference_api_key" {
+  length  = 40
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "inference_api_keys" {
+  name                    = "${local.name}/inference/api-keys"
+  kms_key_id              = module.kms.key_arn
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "inference_api_keys" {
+  secret_id     = aws_secretsmanager_secret.inference_api_keys.id
+  secret_string = jsonencode({ keys = random_password.inference_api_key.result })
+}

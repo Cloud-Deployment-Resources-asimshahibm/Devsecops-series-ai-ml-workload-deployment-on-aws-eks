@@ -1,0 +1,7 @@
+# zizmor — GitHub Actions security audit. Version tags are accepted (Dependabot keeps
+# them current); tighten to "hash-pin" once Dependabot is set to pin by SHA.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": ref-pin

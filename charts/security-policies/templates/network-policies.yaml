@@ -1,0 +1,59 @@
+{{- if .Values.networkPolicies.enabled }}
+# Zero-trust networking for ML namespaces. ml-serving's policy ships with the
+# ml-inference chart (it knows the service port); here: training + Ray.
+{{- range list "ml-training" "ray" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: {{ . }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: {{ . }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+{{- end }}
+---
+# Ray: workers <-> head inside the namespace, Ray Client from JupyterHub,
+# dashboard/job API from the KubeRay operator and Argo workflow pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ray-traffic
+  namespace: ray
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: jupyterhub
+      ports:
+        - { port: 10001, protocol: TCP }
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ray-system
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ml-training
+      ports:
+        - { port: 8265, protocol: TCP }
+        - { port: 6379, protocol: TCP }
+{{- end }}

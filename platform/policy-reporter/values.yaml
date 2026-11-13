@@ -1,0 +1,16 @@
+# Policy Reporter — UI + Prometheus metrics for Kyverno PolicyReports
+# kubectl -n kyverno port-forward svc/policy-reporter-ui 8082:8080
+ui:
+  enabled: true
+plugin:
+  kyverno:
+    enabled: true
+metrics:
+  enabled: true
+monitoring:
+  enabled: true
+  serviceMonitor:
+    labels:
+      release: kube-prometheus-stack
+nodeSelector:
+  workload: system

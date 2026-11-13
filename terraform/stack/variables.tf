@@ -120,3 +120,19 @@ variable "budgets" {
     alert_emails        = []
   }
 }
+
+# ----------------------------- DevSecOps -----------------------------
+variable "waf" {
+  type = object({
+    rate_limit_per_5min = number
+  })
+  default = {
+    rate_limit_per_5min = 2000
+  }
+}
+
+variable "macie_scan_ml_data" {
+  description = "Weekly Macie classification job on the ML data bucket (requires Macie enabled by terraform/global)."
+  type        = bool
+  default     = false
+}

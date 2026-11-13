@@ -1,5 +1,6 @@
 image:
-  tag: "bootstrap" # updated only by the promote-to-prod PR
+  tag: "bootstrap"
+  digest: "" # updated only by the promote-to-prod PR
 
 replicaCount: 3
 
@@ -28,3 +29,10 @@ autoscaling:
 
 podDisruptionBudget:
   minAvailable: 2
+
+security:
+  enableDocs: false
+  apiKeys:
+    secretKey: aiml-prod/inference/api-keys
+  networkPolicy:
+    vpcCidr: 10.20.0.0/16

@@ -1,7 +1,7 @@
 project         = "aiml"
 environment     = "prod"
 region          = "us-east-1"
-gitops_repo_url = "https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS.git"
+gitops_repo_url = "https://github.com/Cloud-Deployment-Resources-asimshahibm/DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS.git"
 gitops_revision = "main"
 
 vpc_cidr           = "10.20.0.0/16"
@@ -37,3 +37,9 @@ budgets = {
   monthly_compute_usd = 4500
   alert_emails        = []
 }
+
+# DevSecOps
+waf = {
+  rate_limit_per_5min = 5000
+}
+macie_scan_ml_data = true

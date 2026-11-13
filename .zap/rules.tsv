@@ -1,0 +1,3 @@
+10049	IGNORE	(Non-storable content: JSON API responses carry Cache-Control: no-store by design)
+10036	IGNORE	(Server header from uvicorn is stripped at the ALB)
+90004	IGNORE	(Insufficient Site Isolation: JSON API, not a browser app)

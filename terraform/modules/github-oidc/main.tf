@@ -15,6 +15,7 @@ variable "github_org" { type = string }
 variable "github_repo" { type = string }
 variable "environments" { type = list(string) }
 variable "state_bucket_arn" { type = string }
+variable "state_kms_key_arn" { type = string }
 variable "ecr_repository_arn" { type = list(string) }
 
 data "aws_caller_identity" "current" {}
@@ -76,6 +77,10 @@ data "aws_iam_policy_document" "state_rw" {
   statement {
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     resources = ["${var.state_bucket_arn}/*"] # PutObject/DeleteObject needed for *.tflock files
+  }
+  statement {
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+    resources = [var.state_kms_key_arn]
   }
 }
 

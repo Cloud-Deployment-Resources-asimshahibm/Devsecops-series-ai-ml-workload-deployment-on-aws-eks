@@ -5,7 +5,18 @@
 image:
   repository: __AWS_ACCOUNT_ID__.dkr.ecr.us-east-1.amazonaws.com/aiml/ml-inference
   tag: "bootstrap" # replaced by CI on first build
+  digest: ""       # sha256:... set by CI; when present the image is pulled by digest (immutable, signature-verified)
   pullPolicy: IfNotPresent
+
+security:
+  requireModelScan: true   # refuse model artifacts without a passing ModelScan record / matching SHA-256
+  enableDocs: true         # /docs + /openapi.json (DAST uses them in dev); disable in prod
+  apiKeys:
+    enabled: true          # X-API-Key on /v1/*; keys synced from Secrets Manager by External Secrets
+    secretKey: ""          # aiml-<env>/inference/api-keys  (JSON {"keys": "k1\nk2"})
+  networkPolicy:
+    enabled: true
+    vpcCidr: 10.0.0.0/8    # ALB (target-type ip) sends traffic from VPC addresses
 
 replicaCount: 2
 
@@ -31,6 +42,7 @@ ingress:
   host: ""              # empty = match any host on the ALB DNS name
   groupName: ""         # share one ALB across ingresses
   certificateArn: ""    # set to enable HTTPS (ACM)
+  wafAclArn: ""         # AWS WAF web ACL (terraform output waf_web_acl_arn; scripts/render-security-outputs.sh)
   annotations: {}
 
 resources:

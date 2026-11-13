@@ -1,5 +1,6 @@
 image:
   tag: "bootstrap"
+  digest: ""
 
 serviceAccount:
   roleArn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-dev-ml-training

@@ -1,0 +1,13 @@
+# Security-sensitive paths need a security reviewer in addition to the author.
+*                                   @Cloud-Deployment-Resources-asimshahibm/platform
+/.github/                           @Cloud-Deployment-Resources-asimshahibm/security
+/policy/                            @Cloud-Deployment-Resources-asimshahibm/security
+/charts/security-policies/          @Cloud-Deployment-Resources-asimshahibm/security
+/platform/kyverno/                  @Cloud-Deployment-Resources-asimshahibm/security
+/platform/falco/                    @Cloud-Deployment-Resources-asimshahibm/security
+/terraform/modules/security-baseline/ @Cloud-Deployment-Resources-asimshahibm/security
+/terraform/modules/github-oidc/     @Cloud-Deployment-Resources-asimshahibm/security
+/terraform/modules/workload-identity/ @Cloud-Deployment-Resources-asimshahibm/security
+/.checkov.yaml                      @Cloud-Deployment-Resources-asimshahibm/security
+/.trivyignore                       @Cloud-Deployment-Resources-asimshahibm/security
+**/values-prod.yaml                 @Cloud-Deployment-Resources-asimshahibm/platform @Cloud-Deployment-Resources-asimshahibm/security

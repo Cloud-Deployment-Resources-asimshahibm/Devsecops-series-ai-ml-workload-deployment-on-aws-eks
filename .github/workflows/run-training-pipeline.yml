@@ -23,22 +23,38 @@ on:
         default: "0.85"
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     environment: ${{ github.event.inputs.environment }}
     timeout-minutes: 120
+    # inputs are passed through env (never interpolated into shell) — prevents
+    # template injection; min_accuracy is also validated as a number.
+    env:
+      TARGET_ENV: ${{ github.event.inputs.environment }}
+      USE_RAY: ${{ github.event.inputs.use_ray }}
+      AUTO_PROMOTE: ${{ github.event.inputs.auto_promote }}
+      MIN_ACCURACY: ${{ github.event.inputs.min_accuracy }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate inputs
+        run: |
+          [[ "$TARGET_ENV" =~ ^(dev|prod)$ ]] || { echo "::error::bad environment"; exit 1; }
+          [[ "$USE_RAY" =~ ^(true|false)$ && "$AUTO_PROMOTE" =~ ^(true|false)$ ]] || { echo "::error::bad boolean"; exit 1; }
+          [[ "$MIN_ACCURACY" =~ ^0?\.[0-9]+$|^1(\.0+)?$ ]] || { echo "::error::min_accuracy must be a number in [0,1]"; exit 1; }
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_CI }}
           aws-region: us-east-1
       - name: kubeconfig
-        run: aws eks update-kubeconfig --name aiml-${{ github.event.inputs.environment }} --region us-east-1
+        run: aws eks update-kubeconfig --name "aiml-${TARGET_ENV}" --region us-east-1
       - name: Install argo CLI
         run: |
           curl -sSL -o argo.gz https://github.com/argoproj/argo-workflows/releases/download/v3.6.2/argo-linux-amd64.gz
@@ -47,19 +63,23 @@ jobs:
         id: submit
         run: |
           WF=$(argo submit -n ml-training --from workflowtemplate/ml-training-pipeline \
-                 -p use-ray=${{ github.event.inputs.use_ray }} \
-                 -p auto-promote=${{ github.event.inputs.auto_promote }} \
-                 -p min-accuracy=${{ github.event.inputs.min_accuracy }} \
+                 -p use-ray="$USE_RAY" \
+                 -p auto-promote="$AUTO_PROMOTE" \
+                 -p min-accuracy="$MIN_ACCURACY" \
                  -p git-sha=${GITHUB_SHA::12} \
                  -l triggered-by=github-actions -o name)
           echo "workflow=$WF" >> "$GITHUB_OUTPUT"
           echo "Submitted $WF"
       - name: Wait for completion
-        run: argo watch -n ml-training ${{ steps.submit.outputs.workflow }} --status Succeeded,Failed,Error
+        env:
+          WF: ${{ steps.submit.outputs.workflow }}
+        run: argo watch -n ml-training "$WF" --status Succeeded,Failed,Error
       - name: Result
         if: always()
+        env:
+          WF: ${{ steps.submit.outputs.workflow }}
         run: |
-          argo get -n ml-training ${{ steps.submit.outputs.workflow }}
-          PHASE=$(argo get -n ml-training ${{ steps.submit.outputs.workflow }} -o json | jq -r .status.phase)
+          argo get -n ml-training "$WF"
+          PHASE=$(argo get -n ml-training "$WF" -o json | jq -r .status.phase)
           echo "### Training pipeline: $PHASE" >> "$GITHUB_STEP_SUMMARY"
           [ "$PHASE" = "Succeeded" ]

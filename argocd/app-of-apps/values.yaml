@@ -1,6 +1,19 @@
 env: dev
-project: ml-platform
-repoURL: https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS.git
+project: ml-platform          # default project for platform components
+
+# Argo CD projects (least privilege). ML workloads cannot create cluster-scoped
+# resources or deploy outside the ML namespaces, even if their chart is altered.
+projects:
+  ml-platform:
+    description: Platform components (operators, observability, security)
+    destinations: ["*"]
+    clusterResources: true
+  ml-workloads:
+    description: ML workloads (inference, pipelines, Ray) — namespaced only
+    destinations: [ml-serving, ml-training, ray]
+    clusterResources: false
+    syncWindows: []
+repoURL: https://github.com/Cloud-Deployment-Resources-asimshahibm/DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS.git
 revision: main
 
 # Every component of the platform. Three kinds:
@@ -20,6 +33,43 @@ apps:
     wave: -30
     namespace: kube-system
     path: charts/karpenter-nodepools
+
+  # ------------------------------------------------------------- security (DevSecOps)
+  kyverno:
+    enabled: true
+    wave: -30
+    namespace: kyverno
+    chart: { repo: https://kyverno.github.io/kyverno/, name: kyverno, version: 3.9.2 }
+    values: platform/kyverno
+    syncOptions: ["ServerSideApply=true"]
+
+  security-policies:
+    enabled: true
+    wave: -28
+    namespace: kyverno
+    path: charts/security-policies
+
+  policy-reporter:
+    enabled: true
+    wave: -10
+    namespace: kyverno
+    chart: { repo: https://kyverno.github.io/policy-reporter, name: policy-reporter, version: 3.11.2 }
+    values: platform/policy-reporter
+
+  falco:
+    enabled: true
+    wave: -10
+    namespace: falco
+    chart: { repo: https://falcosecurity.github.io/charts, name: falco, version: 9.2.2 }
+    values: platform/falco
+
+  trivy-operator:
+    enabled: true
+    wave: -10
+    namespace: trivy-system
+    chart: { repo: https://aquasecurity.github.io/helm-charts/, name: trivy-operator, version: 0.33.0 }
+    values: platform/trivy-operator
+    syncOptions: ["ServerSideApply=true"]
 
   external-secrets:
     enabled: true
@@ -135,17 +185,20 @@ apps:
   ray-cluster:
     enabled: true
     wave: 0
+    project: ml-workloads
     namespace: ray
     path: charts/ray-cluster
 
   ml-pipelines:
     enabled: true
     wave: 0
+    project: ml-workloads
     namespace: ml-training
     path: charts/ml-pipelines
 
   ml-inference:
     enabled: true
     wave: 0
+    project: ml-workloads
     namespace: ml-serving
     path: charts/ml-inference

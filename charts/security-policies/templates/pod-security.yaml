@@ -1,0 +1,128 @@
+# 4) Restricted Pod Security for our workloads (complements PSA namespace labels)
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: ml-restricted-pod-security
+  annotations:
+    policies.kyverno.io/title: Restricted pod security for ML workloads
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+spec:
+  background: true
+  rules:
+    - name: run-as-non-root
+      {{- include "sp.mlMatch" . | nindent 6 }}
+      validate:
+        failureAction: {{ .Values.failureAction.podSecurity }}
+        message: "ML pods must run as non-root (runAsNonRoot: true at pod or container level)."
+        anyPattern:
+          - spec:
+              securityContext:
+                runAsNonRoot: true
+          - spec:
+              =(initContainers):
+                - securityContext:
+                    runAsNonRoot: true
+              containers:
+                - securityContext:
+                    runAsNonRoot: true
+    - name: no-privilege-escalation
+      {{- include "sp.mlMatch" . | nindent 6 }}
+      validate:
+        failureAction: {{ .Values.failureAction.podSecurity }}
+        message: "Containers must set securityContext.allowPrivilegeEscalation=false."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: "false"
+    - name: drop-all-capabilities
+      {{- include "sp.mlMatch" . | nindent 6 }}
+      validate:
+        failureAction: {{ .Values.failureAction.podSecurity }}
+        message: "Containers must drop ALL Linux capabilities."
+        foreach:
+          - list: "request.object.spec.containers[]"
+            deny:
+              conditions:
+                all:
+                  - key: ALL
+                    operator: AnyNotIn
+                    value: "{{ "{{" }} element.securityContext.capabilities.drop[].to_upper(@) || `[]` {{ "}}" }}"
+    - name: seccomp-runtime-default
+      {{- include "sp.mlMatch" . | nindent 6 }}
+      validate:
+        failureAction: {{ .Values.failureAction.podSecurity }}
+        message: "Pods must use the RuntimeDefault (or Localhost) seccomp profile."
+        pattern:
+          spec:
+            securityContext:
+              seccompProfile:
+                type: "RuntimeDefault | Localhost"
+---
+# 5) Requests/limits on every ML container (noisy-neighbour + DoS protection)
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: ml-require-requests-limits
+  annotations:
+    policies.kyverno.io/title: Require requests and memory limits
+    policies.kyverno.io/category: Resilience
+    policies.kyverno.io/severity: medium
+spec:
+  background: true
+  rules:
+    - name: requests-and-memory-limit
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [ml-serving, ray]
+      validate:
+        failureAction: {{ .Values.failureAction.resourceLimits }}
+        message: "CPU/memory requests and a memory limit are required."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    cpu: "?*"
+                    memory: "?*"
+                  limits:
+                    memory: "?*"
+---
+# 6) No host namespaces / hostPath / privileged containers outside platform namespaces
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-host-access
+  annotations:
+    policies.kyverno.io/title: Disallow privileged, host namespaces and hostPath
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+spec:
+  background: true
+  rules:
+    - name: no-host-access
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                {{- toYaml .Values.systemNamespaces | nindent 16 }}
+      validate:
+        failureAction: {{ .Values.failureAction.hostAccess }}
+        message: "Privileged containers, hostNetwork/hostPID/hostIPC and hostPath volumes are not allowed here."
+        pattern:
+          spec:
+            =(hostNetwork): false
+            =(hostPID): false
+            =(hostIPC): false
+            =(volumes):
+              - X(hostPath): "null"
+            containers:
+              - =(securityContext):
+                  =(privileged): false

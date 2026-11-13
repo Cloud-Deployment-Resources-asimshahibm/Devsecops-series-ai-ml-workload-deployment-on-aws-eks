@@ -40,7 +40,7 @@ spec:
           labels: { severity: critical, team: ml-platform }
           annotations:
             summary: "ml-inference 5xx ratio above {{ mul .Values.metrics.prometheusRule.errorRatio 100 }}%"
-            runbook_url: https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS/blob/main/docs/RUNBOOK.md#ops-high-error-rate
+            runbook_url: https://github.com/Cloud-Deployment-Resources-asimshahibm/DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS/blob/main/docs/RUNBOOK.md#ops-high-error-rate
         - alert: MLInferenceHighLatency
           expr: mlserve:request_latency_p95:5m > {{ .Values.metrics.prometheusRule.latencyP95Seconds }}
           for: 10m

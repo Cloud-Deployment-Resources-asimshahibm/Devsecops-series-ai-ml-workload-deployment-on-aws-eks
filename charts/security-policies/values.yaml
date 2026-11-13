@@ -1,0 +1,33 @@
+env: dev
+accountId: "__AWS_ACCOUNT_ID__"
+region: us-east-1
+
+# Namespaces that run our own (CI-built, signed) workloads
+mlNamespaces: [ml-serving, ml-training, ray]
+
+# Platform namespaces allowed to use host access (DaemonSets: node-exporter,
+# Filebeat, Alloy, Falco, GPU operator, CSI drivers, Trivy node collector)
+systemNamespaces: [kube-system, monitoring, logging, gpu-operator, falco, trivy-system, kyverno, opencost, external-secrets, argocd]
+
+# Enforce = block at admission, Audit = report only (PolicyReports / Policy Reporter UI)
+failureAction:
+  imageSignatures: Enforce
+  trustedRegistries: Enforce
+  podSecurity: Enforce
+  resourceLimits: Enforce
+  latestTag: Enforce
+  hostAccess: Enforce
+
+signing:
+  # cosign keyless (Sigstore Fulcio + Rekor) identity of our build workflow
+  issuer: https://token.actions.githubusercontent.com
+  subject: https://github.com/Cloud-Deployment-Resources-asimshahibm/DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS/.github/workflows/build-and-deploy.yml@refs/heads/main
+  rekorUrl: https://rekor.sigstore.dev
+  repositories: [aiml/ml-inference, aiml/ml-training, aiml/ml-ray]
+
+# Extra registries allowed in ML namespaces (Argo executor sidecars, RayJob submitters use our image)
+extraTrustedRegistries:
+  - quay.io/argoproj/argoexec*
+
+networkPolicies:
+  enabled: true

@@ -1,0 +1,77 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: ml-platform-guardrails
+policies:
+  - policies.yaml          # rendered by scripts/policy-check.sh
+resources:
+  - resources.yaml
+results:
+  # our hardened inference pod passes every validate policy
+  - policy: restrict-image-registries
+    rule: ecr-only
+    resources: [good-inference]
+    kind: Pod
+    result: pass
+  - policy: ml-restricted-pod-security
+    rule: run-as-non-root
+    resources: [good-inference]
+    kind: Pod
+    result: pass
+  - policy: ml-restricted-pod-security
+    rule: no-privilege-escalation
+    resources: [good-inference]
+    kind: Pod
+    result: pass
+  - policy: ml-restricted-pod-security
+    rule: drop-all-capabilities
+    resources: [good-inference]
+    kind: Pod
+    result: pass
+  - policy: ml-restricted-pod-security
+    rule: drop-all-capabilities
+    resources: [bad-dockerhub-latest-root]
+    kind: Pod
+    result: fail
+  - policy: ml-require-requests-limits
+    rule: requests-and-memory-limit
+    resources: [good-inference]
+    kind: Pod
+    result: pass
+  - policy: disallow-latest-tag
+    rule: require-explicit-tag-or-digest
+    resources: [good-inference]
+    kind: Pod
+    result: pass
+  # an attacker-style pod is rejected on every axis
+  - policy: restrict-image-registries
+    rule: ecr-only
+    resources: [bad-dockerhub-latest-root]
+    kind: Pod
+    result: fail
+  - policy: disallow-latest-tag
+    rule: require-explicit-tag-or-digest
+    resources: [bad-dockerhub-latest-root]
+    kind: Pod
+    result: fail
+  - policy: ml-restricted-pod-security
+    rule: run-as-non-root
+    resources: [bad-dockerhub-latest-root]
+    kind: Pod
+    result: fail
+  - policy: disallow-host-access
+    rule: no-host-access
+    resources: [bad-dockerhub-latest-root, bad-hostpath]
+    kind: Pod
+    result: fail
+  # platform DaemonSets in system namespaces are exempt from the host-access rule
+  - policy: disallow-host-access
+    rule: no-host-access
+    resources: [ok-node-exporter]
+    kind: Pod
+    result: skip
+  - policy: ml-require-requests-limits
+    rule: requests-and-memory-limit
+    resources: [bad-no-limits]
+    kind: Pod
+    result: fail

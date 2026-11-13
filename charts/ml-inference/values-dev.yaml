@@ -1,5 +1,6 @@
 image:
   tag: "bootstrap"
+  digest: ""
 
 replicaCount: 1
 
@@ -19,3 +20,10 @@ autoscaling:
 
 podDisruptionBudget:
   enabled: false
+
+security:
+  enableDocs: true
+  apiKeys:
+    secretKey: aiml-dev/inference/api-keys
+  networkPolicy:
+    vpcCidr: 10.10.0.0/16

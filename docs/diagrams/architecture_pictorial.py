@@ -23,8 +23,8 @@ PNG_OUT = HERE.parent / "architecture-pictorial.png"
 W, H = 1920, 1400
 ICON = 54
 
-TITLE = "DevOps-Series (AI/ML Workload Deployment on Kubernetes — AWS-EKS and Azure-AKS Platforms)"
-SUBTITLE = "AWS-EKS reference implementation · Terraform · GitHub Actions · Argo CD + Helm · Karpenter CPU/GPU · JupyterHub · Argo Workflows · KubeRay · Prometheus · Grafana · Loki · ELK · OpenCost · SLOs"
+TITLE = "DevSecOps-Series (AI/ML Workload Deployment on Kubernetes — AWS-EKS and Azure-AKS Platforms)"
+SUBTITLE = "AWS-EKS reference implementation · security at every stage (docs/devsecops-pipeline.png) · Terraform · GitHub Actions · Argo CD + Helm · Karpenter CPU/GPU · JupyterHub · Argo Workflows · KubeRay · Prometheus · Grafana · Loki · ELK · OpenCost · SLOs"
 
 # ----------------------------------------------------------------------------- groups
 # (x, y, w, h, title, border, fill, title_color)
@@ -49,7 +49,7 @@ GROUPS = [
 NODES = {
     "repo": (136, 150, "github.png", "Git monorepo\nIaC · charts · GitOps · ML"),
     "gha": (136, 262, "github-actions.png", "GitHub Actions\nCI · build · promote · train"),
-    "trivy": (136, 374, "trivy.png", "Trivy · Checkov\nimage + IaC scans"),
+    "trivy": (136, 374, "trivy.png", "Security gates\nSAST·SCA·IaC·sign·SBOM"),
     "tf": (136, 486, "terraform.png", "Terraform\nplan on PR · gated apply"),
     "users": (136, 670, "users.png", "ML engineers\n& API clients"),
     # shared services

@@ -15,7 +15,7 @@ from typing import Any
 
 import joblib
 
-from mlstore import ModelStore
+from mlstore import IntegrityError, ModelStore, sha256_file
 
 
 @dataclass
@@ -31,8 +31,9 @@ class LoadedModel:
 
 
 class ModelManager:
-    def __init__(self, store_uri: str, model_name: str, pinned_version: str = "latest") -> None:
+    def __init__(self, store_uri: str, model_name: str, pinned_version: str = "latest", require_scan: bool = True) -> None:
         self.store = ModelStore(store_uri)
+        self.require_scan = require_scan
         self.model_name = model_name
         self.pinned_version = pinned_version
         self._current: LoadedModel | None = None
@@ -45,11 +46,27 @@ class ModelManager:
     def target_version(self) -> str:
         return self.store.resolve(self.model_name, self.pinned_version)
 
+    def verify(self, version: str, path: Path, metadata: dict[str, Any]) -> None:
+        """Refuse artifacts that were modified after training or never passed the security scan.
+
+        joblib/pickle executes code on load, so these checks run BEFORE joblib.load().
+        """
+        digest = sha256_file(path)
+        if digest != metadata.get("artifact_sha256"):
+            raise IntegrityError(f"{self.model_name}:{version} sha256 {digest} != recorded {metadata.get('artifact_sha256')}")
+        if self.require_scan:
+            if not self.store.exists(self.model_name, version, "security.json"):
+                raise IntegrityError(f"{self.model_name}:{version} has no security scan record")
+            sec = self.store.get_json(self.model_name, version, "security.json")
+            if not sec.get("passed") or sec.get("sha256") != digest:
+                raise IntegrityError(f"{self.model_name}:{version} security scan not passed for this digest")
+
     def load(self, version: str) -> LoadedModel:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = self.store.get_file(Path(tmp) / "model.joblib", self.model_name, version, "model.joblib")
-            pipeline = joblib.load(path)
         metadata = self.store.get_json(self.model_name, version, "metadata.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.store.get_file(Path(tmp) / "model.pkl", self.model_name, version, "model.pkl")
+            self.verify(version, path, metadata)
+            pipeline = joblib.load(path)
         loaded = LoadedModel(self.model_name, version, pipeline, metadata)
         with self._lock:
             self._current = loaded

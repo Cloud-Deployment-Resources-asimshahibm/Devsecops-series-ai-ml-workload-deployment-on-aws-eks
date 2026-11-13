@@ -46,3 +46,8 @@ output "irsa_role_arns" {
 output "budgets" {
   value = module.cost_guardrails.budget_names
 }
+
+output "waf_web_acl_arn" {
+  description = "Rendered into ingress annotations by scripts/render-security-outputs.sh"
+  value       = module.waf.web_acl_arn
+}

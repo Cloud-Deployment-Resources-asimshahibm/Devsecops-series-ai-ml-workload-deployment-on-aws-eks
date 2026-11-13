@@ -26,12 +26,15 @@ spec:
         logs.ml-platform/format: json
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
+      # The API never talks to the Kubernetes API. IRSA still works: the EKS pod identity
+      # webhook injects its own projected AWS token volume.
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       terminationGracePeriodSeconds: 30
       containers:
         - name: api
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "ml-inference.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -49,6 +52,14 @@ spec:
               value: us-east-1
             - name: TMPDIR
               value: /tmp
+            - name: REQUIRE_MODEL_SCAN
+              value: {{ .Values.security.requireModelScan | quote }}
+            - name: ENABLE_DOCS
+              value: {{ .Values.security.enableDocs | quote }}
+            {{- if .Values.security.apiKeys.enabled }}
+            - name: API_KEYS_FILE
+              value: /var/run/secrets/ml-inference/api-keys
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -74,10 +85,21 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.security.apiKeys.enabled }}
+            - name: api-keys
+              mountPath: /var/run/secrets/ml-inference
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 1Gi
+        {{- if .Values.security.apiKeys.enabled }}
+        - name: api-keys
+          secret:
+            secretName: {{ include "ml-inference.fullname" . }}-api-keys
+            defaultMode: 0400
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

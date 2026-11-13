@@ -1,8 +1,14 @@
-# Runbook — Deploying the AI/ML Platform (step by step)
+# Runbook — Deploying the AI/ML Platform, DevSecOps edition (step by step)
 
 > Audience: platform / DevOps engineer. Every step lists **what to run**, **what
 > you should see**, and **what to do if you don't**. Run commands from the repo
 > root unless stated otherwise. `ENV` is `dev` until Phase 11.
+>
+> 🔐 **DevSecOps edition.** Steps marked 🔐 are the security additions. Every gate is
+> explained in [DEVSECOPS.md](DEVSECOPS.md). If you also run the DevOps edition, deploy this one
+> to a **separate AWS account** (recommended), or change the `aiml` project prefix in
+> `terraform/envs/*/terraform.tfvars` and `terraform/global`. Otherwise bucket, role and
+> cluster names collide.
 
 **Contents**
 
@@ -10,12 +16,14 @@
 - [Phase 1 — Configure the repository](#phase-1--configure-the-repository)
 - [Phase 2 — Global layer: state, OIDC, ECR](#phase-2--global-layer-state-oidc-ecr)
 - [Phase 3 — GitHub configuration + first image build](#phase-3--github-configuration--first-image-build)
+- [Phase 3A — 🔐 Security setup (GitHub + supply chain)](#phase-3a--security-setup)
 - [Phase 4 — Provision the dev environment](#phase-4--provision-the-dev-environment)
 - [Phase 5 — GitOps platform sync (what Argo CD installs, in order)](#phase-5--gitops-platform-sync)
 - [Phase 6 — Secrets that need a human (JupyterHub OAuth)](#phase-6--secrets-that-need-a-human)
 - [Phase 7 — Run the ML training pipeline](#phase-7--run-the-ml-training-pipeline)
 - [Phase 8 — Validate inference + autoscaling](#phase-8--validate-inference--autoscaling)
 - [Phase 9 — Validate observability](#phase-9--validate-observability)
+- [Phase 9A — 🔐 Validate security controls](#phase-9a--validate-security-controls)
 - [Phase 10 — Model development in JupyterHub (CPU, GPU, Ray)](#phase-10--model-development-in-jupyterhub)
 - [Phase 11 — Production rollout](#phase-11--production-rollout)
 - [Phase 12 — Day-2 operations](#phase-12--day-2-operations)
@@ -63,7 +71,7 @@ macOS: `brew install terraform awscli kubectl helm jq yq gh argo`.
 
 ### 0.3 GitHub
 
-- Repository: `Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS`.
+- Repository: `Cloud-Deployment-Resources-asimshahibm/DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS`.
 - Argo CD pulls this repo over HTTPS. If you make it **private**, add a read-only deploy key or token in Argo CD (`argocd repo add ...`) after Phase 4.
 
 ✅ **Exit criteria:** tools installed, `aws sts get-caller-identity` works, quota requests submitted.
@@ -73,8 +81,8 @@ macOS: `brew install terraform awscli kubectl helm jq yq gh argo`.
 ## Phase 1 — Configure the repository
 
 ```bash
-git clone https://github.com/Cloud-Deployment-Resources-asimshahibm/DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS.git
-cd DevOps-Series-AI-ML-Workload-deployment-on-AWS-EKS
+git clone https://github.com/Cloud-Deployment-Resources-asimshahibm/DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS.git
+cd DevSecOps-Series-AI-ML-Workload-deployment-on-AWS-EKS
 make configure            # = scripts/configure.sh
 ```
 
@@ -167,7 +175,20 @@ gh api -X PUT repos/{owner}/{repo}/environments/prod
 
 ### 3.3 Branch protection on `main`
 
-Require PRs + status checks `Python lint + tests`, `Terraform fmt + validate + tflint`, `Helm lint + render + kubeconform`.
+Require PRs, **CODEOWNERS review**, signed commits (recommended), and these status checks (job names from `ci.yml`):
+
+```
+code · secret scanning (gitleaks)          code · SAST (Semgrep + Bandit)
+code · dependencies (pip-audit + OSV)      code · dependency review (PR)
+code · IaC & config scanning (Checkov + Trivy)
+code · Kubernetes policy (Kyverno CLI, shift-left)
+code · workflow security (actionlint + zizmor)
+build · Dockerfile lint (hadolint)         test · unit + model-security tests
+test · terraform validate + policy unit tests   test · helm lint + kubeconform
+CodeQL
+```
+
+Under Settings › Code security, also add a **code scanning merge rule** that blocks on high and critical alerts.
 
 ### 3.4 Build images **before** the cluster exists
 
@@ -189,6 +210,45 @@ aws ecr list-images --repository-name aiml/ml-inference
 ❗ *Trivy fails on CRITICAL*: bump the base image / pinned package in `ml/*/requirements.txt` and push again.
 
 ✅ **Exit criteria:** images in ECR, `values-dev.yaml` tags ≠ `bootstrap`.
+
+---
+
+## Phase 3A — Security setup
+
+🔐 One-time settings that the security gates rely on.
+
+1. **Code security features** (Settings › Code security): enable *Dependency graph*,
+   *Dependabot alerts + security updates*, *Secret scanning + push protection*,
+   *Private vulnerability reporting* and *Code scanning* (the workflows upload SARIF from
+   gitleaks, Semgrep, Bandit, Checkov, Trivy, zizmor and CodeQL).
+2. **Actions hardening** (Settings › Actions › General): *Workflow permissions = Read
+   repository contents* (each job asks for more where it needs it), and untick *Allow GitHub
+   Actions to create and approve pull requests* unless you use `promote-prod.yml`. That
+   workflow needs it, so leave it ticked in that case.
+3. **CODEOWNERS**: edit `.github/CODEOWNERS` and replace the placeholder teams with real
+   users or teams. Security paths need their approval.
+4. **Signing identity.** Kyverno only admits images signed by
+   `https://github.com/<org>/<repo>/.github/workflows/build-and-deploy.yml@refs/heads/main`.
+   If you fork or rename the repo, update `signing.subject` in
+   `charts/security-policies/values.yaml`. If you don't, every ML pod is rejected (that is the point).
+5. **Verify your first signed build** (from Phase 3.4):
+   ```bash
+   IMG=$(yq '.image.repository + "@" + .image.digest' charts/ml-inference/values-dev.yaml)
+   cosign verify "$IMG" --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     --certificate-identity "https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/.github/workflows/build-and-deploy.yml@refs/heads/main" | jq '.[0].optional.Subject'
+   gh attestation verify "oci://$IMG" --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+   ```
+   Expected: `Verification succeeded` and the workflow subject.
+6. **AWS security services** are enabled by `terraform/global` (`security_services`). If
+   your organization already manages GuardDuty, Security Hub, Config or CloudTrail centrally
+   (Control Tower), set those flags to `false` in `terraform/global/terraform.tfvars`
+   *before* Phase 2. Otherwise the apply conflicts with the delegated administrator.
+
+❗ *Build fails at "Gate: Trivy" or "Gate: Grype"*: a fixable HIGH/CRITICAL CVE. Upgrade the
+package or base image. Add a time-boxed `.trivyignore` entry only with a reason
+(see [DEVSECOPS.md §5](DEVSECOPS.md#5-exceptions-process)).
+
+✅ **Exit criteria:** signed images with SBOM + provenance in ECR; all CI gates green on `main`.
 
 ---
 
@@ -369,19 +429,21 @@ kubectl -n ml-serving logs deploy/ml-inference | grep '"model loaded"'
 
 ```bash
 ALB=$(kubectl -n ml-serving get ingress ml-inference -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-curl -s http://$ALB/v1/models | jq '.version, .metadata.metrics'
-curl -s http://$ALB/v1/predict -H 'content-type: application/json' \
+API_KEY=$(aws secretsmanager get-secret-value --secret-id aiml-dev/inference/api-keys --query SecretString --output text | jq -r .keys)
+curl -s http://$ALB/v1/models -H "x-api-key: $API_KEY" | jq '.version, .metadata.metrics'
+curl -s http://$ALB/v1/predict -H 'content-type: application/json' -H "x-api-key: $API_KEY" \
   -d '{"instances": [[5.1,3.5,1.4,0.2],[6.7,3.0,5.2,2.3]]}' | jq
 # -> setosa, virginica
+curl -s -o /dev/null -w '%{http_code}\n' http://$ALB/v1/predict -d '{}'   # -> 401 without a key
 ```
 
-Swagger UI: `http://$ALB/docs`.
+Swagger UI: `http://$ALB/docs` (dev only; `security.enableDocs: false` in prod).
 
 Load test → HPA → Karpenter:
 
 ```bash
 kubectl run load --rm -it --image=williamyeh/hey --restart=Never -- \
-  -z 5m -c 50 -m POST -T application/json \
+  -z 5m -c 50 -m POST -T application/json -H "x-api-key: $API_KEY" \
   -d '{"instances": [[5.1,3.5,1.4,0.2]]}' http://ml-inference.ml-serving/v1/predict
 # second terminal
 kubectl -n ml-serving get hpa -w
@@ -440,6 +502,62 @@ make smoke ENV=dev
 
 ---
 
+## Phase 9A — Validate security controls
+
+🔐 Prove each runtime control works. Don't just trust that it is installed.
+
+1. **Attach the WAF and enable DAST** (once per environment):
+   ```bash
+   scripts/render-security-outputs.sh dev        # writes the WAF ARN into the ingress values
+   git commit -am "security(dev): attach WAF to ALB ingresses" && git push
+   ALB=$(kubectl -n ml-serving get ingress ml-inference -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+   gh variable set DEV_INFERENCE_URL --body "http://$ALB"
+   gh secret set DAST_API_KEY --body "$(aws secretsmanager get-secret-value --secret-id aiml-dev/inference/api-keys --query SecretString --output text | jq -r .keys)"
+   gh workflow run dast.yml && gh run watch
+   ```
+   Expected: the ALB shows the web ACL (`aws wafv2 get-web-acl-for-resource --resource-arn <alb-arn>`) and the DAST run is green.
+2. **Admission control rejects untrusted images:**
+   ```bash
+   kubectl -n ml-serving run probe --image=public.ecr.aws/docker/library/busybox:1.37 --restart=Never -- sleep 60
+   # Error from server: admission webhook "mutate.kyverno.svc-fail" denied the request:
+   #   ... verify-ml-image-signatures / restrict-image-registries ...
+   kubectl -n ml-serving run probe2 --image="$(yq '.image.repository' charts/ml-inference/values-dev.yaml):latest" --restart=Never
+   # denied: disallow-latest-tag
+   ```
+3. **Pod security:** `kubectl -n ml-serving run root --image=... --overrides='{"spec":{"securityContext":{"runAsUser":0}}}'` is denied by
+   `ml-restricted-pod-security` and by Pod Security Admission.
+4. **Runtime detection (Falco):**
+   ```bash
+   POD=$(kubectl -n ml-serving get pod -l app.kubernetes.io/name=ml-inference -o name | head -1)
+   kubectl -n ml-serving exec "$POD" -- sh -c 'id' 2>/dev/null || true
+   ```
+   Within ~1 min: Loki `{priority="Critical"}` shows *Shell spawned in model-serving container*,
+   and `FalcoCriticalEvent` fires in Alertmanager. (The image has no shell installed in some
+   builds; then the exec failing is itself the expected result.)
+5. **Model integrity.** Publish a tampered copy of the current model as a new version and point
+   the registry at it (dev only):
+   ```bash
+   STORE=$(yq '.model.storeUri' charts/ml-inference/values-dev.yaml)/iris-classifier    # s3://.../models/iris-classifier
+   CUR=$(aws s3 cp "$STORE/latest.json" - | jq -r .version)
+   aws s3 cp --recursive "$STORE/$CUR/" "$STORE/tamper-test/"
+   echo "not the trained model" | aws s3 cp - "$STORE/tamper-test/model.pkl"
+   aws s3 cp "$STORE/latest.json" /tmp/latest.good.json
+   jq -n --arg v tamper-test --arg p "$CUR" '{version:$v,previous:$p}' | aws s3 cp - "$STORE/latest.json"
+   ```
+   Within the refresh interval the pods log `model rejected by integrity check` (sha256 mismatch).
+   They keep serving `$CUR`, and `ModelArtifactIntegrityFailure` fires. Clean up:
+   `aws s3 cp /tmp/latest.good.json "$STORE/latest.json" && aws s3 rm --recursive "$STORE/tamper-test/"`.
+6. **Continuous scanning:** `kubectl get vulnerabilityreports,configauditreports,exposedsecretreports -n ml-serving`
+   lists reports for every workload. Grafana › Security › *Security Posture* is populated.
+7. **AWS side:** Security Hub › Summary shows the FSBP and CIS standards with a score.
+   GuardDuty › Runtime coverage shows the EKS cluster as *Healthy*. Inspector › ECR shows the
+   three repositories with enhanced scanning.
+8. `make smoke ENV=dev`. The **Security** section must be all PASS.
+
+✅ **Exit criteria:** untrusted, unsigned, `latest` and root pods are rejected; Falco and the integrity alerts fire on demand; WAF attached; DAST green; Security Hub + GuardDuty Runtime active.
+
+---
+
 ## Phase 10 — Model development in JupyterHub
 
 1. `make access` → http://localhost:8000 → *Sign in with GitHub* (must be in the allowed org).
@@ -471,7 +589,9 @@ make smoke ENV=dev
 ## Phase 11 — Production rollout
 
 1. **Harden `terraform/envs/prod/terraform.tfvars`**:
-   - `cluster_endpoint_public_access_cidrs` → your VPN/office CIDRs.
+   - `cluster_endpoint_public_access_cidrs` → your VPN/office CIDRs. 🔐 **Required**: the OPA
+     policy `policy/terraform` *denies* the prod plan while it is `0.0.0.0/0`
+     (`prod EKS API endpoint must not be open to 0.0.0.0/0`).
    - review instance sizes and RDS class.
 2. **Pin the Karpenter AMI** in `charts/karpenter-nodepools/values-prod.yaml` (`amiAlias: al2023@vYYYYMMDD`).
 3. **DNS/TLS**: request ACM certs; set `ingress.host` + `certificateArn` in `charts/ml-inference/values-prod.yaml` and `platform/jupyterhub/values-prod.yaml`; create Route 53 aliases to the ALB.
@@ -486,12 +606,17 @@ make smoke ENV=dev
    aws eks update-kubeconfig --name aiml-prod --region us-east-1 --alias aiml-prod
    scripts/wait-for-apps.sh aiml-prod
    ```
-7. Repeat Phase 6 for prod secrets (`aiml-prod/jupyterhub/github-oauth`).
+7. Repeat Phase 6 for prod secrets (`aiml-prod/jupyterhub/github-oauth`), then 🔐
+   `scripts/render-security-outputs.sh prod`, commit and push. This attaches the prod WAF.
 8. **Promote images** dev → prod:
    ```bash
-   gh workflow run promote-prod.yml           # opens PR "deploy(prod): ml images <tag>"
+   gh workflow run promote-prod.yml           # opens PR "deploy(prod): verified ml images <tag>"
    ```
-   Complete the checklist in the PR, get approval, merge → Argo CD in prod syncs.
+   🔐 The workflow first re-verifies every dev **digest**: cosign signature, SLSA
+   provenance, a fresh Trivy scan with today's CVE data, and the last DAST run. Only then
+   does it open the PR. Complete the checklist (Security Posture dashboard clean in dev),
+   get CODEOWNERS approval and merge. Argo CD in prod syncs **inside the change window**
+   (syncs are denied 22:00–06:00 UTC; manual sync is allowed for hotfixes).
 9. Train in prod: nightly CronWorkflow runs at 03:00 UTC with `auto-promote=false`; approve promotion:
    ```bash
    argo -n ml-training list

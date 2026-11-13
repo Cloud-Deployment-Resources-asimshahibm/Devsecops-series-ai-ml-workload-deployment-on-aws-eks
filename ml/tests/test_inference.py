@@ -1,14 +1,28 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from trainer import train
+from mlstore import ModelStore
+from trainer import promote, scan_model, train
+
+CLEAN = lambda path: {"issues": [], "errors": [], "exit_code": 0}  # noqa: E731
+
+
+def train_scan_promote(store: str) -> str:
+    vf = f"{store}.version"
+    assert train.main(["--model-store", store, "--n-estimators", "50", "--version-file", vf]) == 0
+    with open(vf) as fh:
+        version = fh.read()
+    assert scan_model.run(ModelStore(store), "iris-classifier", version, CLEAN)[0] == 0
+    assert promote.main(["--model-store", store, "--version", version]) == 0
+    return version
 
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     store = str(tmp_path / "models")
-    assert train.main(["--model-store", store, "--promote", "--n-estimators", "50"]) == 0
+    train_scan_promote(store)
     monkeypatch.setenv("MODEL_STORE_URI", store)
+    monkeypatch.delenv("API_KEYS", raising=False)
     from app.main import app
 
     with TestClient(app) as c:

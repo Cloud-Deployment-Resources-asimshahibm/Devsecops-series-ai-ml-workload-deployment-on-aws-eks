@@ -1,0 +1,9 @@
+# trivy config (IaC / misconfiguration) settings used by CI
+severity: [HIGH, CRITICAL]
+misconfiguration:
+  scanners: [terraform, dockerfile, kubernetes, helm]
+  terraform:
+    exclude-downloaded-modules: true
+scan:
+  skip-dirs: [ml/tests, .terraform, charts/security-policies/tests]   # tests/ holds intentionally-bad fixtures
+ignorefile: .trivyignore

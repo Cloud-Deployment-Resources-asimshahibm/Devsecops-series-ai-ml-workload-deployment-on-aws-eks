@@ -1,0 +1,44 @@
+# Trivy Operator — continuous in-cluster scanning: image CVEs of RUNNING workloads,
+# misconfig (config audit), exposed secrets in images, RBAC assessment, infra
+# assessment and CIS / NSA / PSS compliance reports. Metrics -> Prometheus.
+targetNamespaces: ""          # all
+excludeNamespaces: ""
+
+operator:
+  scanJobsConcurrentLimit: 3
+  scanJobTimeout: 10m
+  vulnerabilityScannerScanOnlyCurrentRevisions: true
+  configAuditScannerScanOnlyCurrentRevisions: true
+  exposedSecretScannerEnabled: true
+  rbacAssessmentScannerEnabled: true
+  infraAssessmentScannerEnabled: true
+  clusterComplianceEnabled: true
+  metricsVulnIdEnabled: true
+  metricsExposedSecretInfo: true
+  metricsConfigAuditInfo: true
+
+trivy:
+  ignoreUnfixed: true
+  severity: CRITICAL,HIGH,MEDIUM
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+compliance:
+  cron: "0 */6 * * *"
+  specs:
+    - k8s-cis-1.23
+    - eks-cis-1.4
+    - k8s-nsa-1.0
+    - k8s-pss-restricted-0.1
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+
+nodeSelector:
+  workload: system
+
+serviceAccount:
+  name: trivy-operator

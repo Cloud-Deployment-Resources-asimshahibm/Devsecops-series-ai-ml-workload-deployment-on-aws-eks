@@ -22,6 +22,9 @@ metadata:
     {{- else }}
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     {{- end }}
+    {{- with .Values.ingress.wafAclArn }}
+    alb.ingress.kubernetes.io/wafv2-acl-arn: {{ . }}
+    {{- end }}
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

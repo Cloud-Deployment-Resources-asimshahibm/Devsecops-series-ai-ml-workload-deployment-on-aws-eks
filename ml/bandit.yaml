@@ -1,0 +1,10 @@
+# Bandit: security linter for the ML code
+exclude_dirs: ["ml/tests", "tests", ".venv"]
+skips:
+  # B403/B301: pickle import/load — model (de)serialization is unavoidable for sklearn; it is
+  # mitigated by SHA-256 pinning + ModelScan + Semgrep rule unverified-model-deserialization.
+  - B403
+  - B301
+  # B603: subprocess without shell — the only call is the fixed ModelScan argv in scan_model.py
+  - B603
+  - B404

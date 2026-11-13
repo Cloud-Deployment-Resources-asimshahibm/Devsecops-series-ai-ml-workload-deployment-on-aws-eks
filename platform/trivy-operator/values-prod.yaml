@@ -1,0 +1,4 @@
+serviceAccount:
+  name: trivy-operator
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::__AWS_ACCOUNT_ID__:role/aiml-prod-image-verifier
