@@ -2,13 +2,13 @@
 # Build context: ./ml   (docker build -f ml/inference/Dockerfile ml)
 
 # ---------- build stage: compile wheels once ----------
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.15-slim-bookworm AS builder
 ENV PIP_NO_CACHE_DIR=1
 COPY inference/requirements.txt /tmp/requirements.txt
 RUN pip install "pip==24.3.1" && pip wheel --wheel-dir /wheels -r /tmp/requirements.txt
 
 # ---------- runtime stage ----------
-FROM python:3.12-slim-bookworm
+FROM python:3.15-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
