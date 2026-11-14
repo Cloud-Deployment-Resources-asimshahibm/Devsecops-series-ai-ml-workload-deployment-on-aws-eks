@@ -73,7 +73,7 @@ jobs:
           persist-credentials: false
       - id: meta
         run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_CI }}
           aws-region: ${{ env.AWS_REGION }}

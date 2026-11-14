@@ -44,7 +44,7 @@ jobs:
             echo "training=$(yq '.images.training.repository + "@" + .images.training.digest' charts/ml-pipelines/values-dev.yaml)"
             echo "ray=$(yq '.image.repository + "@" + .image.digest' charts/ray-cluster/values-dev.yaml)"
           } >> "$GITHUB_OUTPUT"
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_CI }}
           aws-region: ${{ env.AWS_REGION }}
