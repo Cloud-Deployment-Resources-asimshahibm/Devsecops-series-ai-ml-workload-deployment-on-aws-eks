@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Build context: ./ml   (docker build -f ml/training/Dockerfile ml)
-FROM python:3.12-slim-bookworm AS base
+FROM python:3.15-slim-bookworm AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
