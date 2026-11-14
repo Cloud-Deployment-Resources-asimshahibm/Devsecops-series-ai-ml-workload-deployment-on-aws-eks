@@ -137,7 +137,7 @@ module "vpc_endpoints" {
 # ------------------------------------------------------------------------------
 module "ebs_csi_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.48"
+  version = "~> 6.8"
 
   role_name             = "${local.name}-ebs-csi"
   attach_ebs_csi_policy = true
@@ -153,7 +153,7 @@ module "ebs_csi_irsa" {
 
 module "efs_csi_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.48"
+  version = "~> 6.8"
 
   role_name             = "${local.name}-efs-csi"
   attach_efs_csi_policy = true
