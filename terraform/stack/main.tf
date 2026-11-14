@@ -53,7 +53,7 @@ module "kms" {
 # ------------------------------------------------------------------------------
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.16"
+  version = "~> 6.7"
 
   name = local.name
   cidr = var.vpc_cidr
@@ -107,7 +107,7 @@ resource "aws_vpc_security_group_ingress_rule" "vpc_endpoints" {
 
 module "vpc_endpoints" {
   source  = "terraform-aws-modules/vpc/aws//modules/vpc-endpoints"
-  version = "~> 5.16"
+  version = "~> 6.7"
 
   vpc_id = module.vpc.vpc_id
 
