@@ -168,7 +168,7 @@ module "efs_csi_irsa" {
 
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 20.31"
+  version = "~> 21.29"
 
   cluster_name    = local.name
   cluster_version = var.kubernetes_version
@@ -287,7 +287,7 @@ module "eks" {
 
 module "karpenter" {
   source  = "terraform-aws-modules/eks/aws//modules/karpenter"
-  version = "~> 20.31"
+  version = "~> 21.29"
 
   cluster_name          = module.eks.cluster_name
   enable_v1_permissions = true
